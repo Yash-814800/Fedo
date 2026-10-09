@@ -10,8 +10,8 @@ labels: bug
 
 **How to reproduce**
 
-**macOS version**
+**Fedora version**
 
-**Mac model**
+**GNOME Shell version**
 
-**Coucou version**
+**Fedo version**
