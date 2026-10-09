@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "What Fedo's windows are allowed to do. Everything that touches the OS goes through Fedo's own commands.",
+  "windows": ["island", "settings", "ghost"],
+  "permissions": ["core:default", "autostart:default"]
+}
