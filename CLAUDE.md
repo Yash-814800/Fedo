@@ -1,32 +1,77 @@
-# Coucou — guide for AI coding agents
+# Fedo — guide for AI coding agents
 
-Coucou is a native macOS app (`NotchBuddy/`); `windows/` is the Tauri version for Windows and Linux. Mochi, a small animated character living in the MacBook notch, shows AI coding agent sessions (Claude Code, Gemini CLI, Antigravity and more) and a few integrations, and lets the user approve, answer, chat and drop files from the notch.
+Fedo is a personal desktop companion for Fedora Linux, GNOME on Wayland,
+one machine only. A ghost character living in the GNOME top bar shows
+Claude Code and Antigravity sessions and the Spotify pill, and lets the
+user approve, answer and chat from the island. It's a fork of
+[coucou](https://github.com/Louis-CFM/coucou), keeping its island UI/UX
+and Claude Code hook relay; see [`FEDO.md`](FEDO.md) for the full build
+plan (phases, architecture, resource budgets) and
+[`docs/FEDO-NOTES.md`](docs/FEDO-NOTES.md) for decisions and known
+limitations recorded as each phase lands.
 
 ## Where things are
-- `NotchBuddy/Sources/App/` — Mac-only Swift code. `NotchBuddy/Sources/CoucouKit/` — code shared with the iPhone app (Mochi's BotEngine and outfits, pills, diff, models). `NotchBuddy/Sources/Phone/` — iPhone app (`CoucouPhone` target), with its widgets in `Sources/Widgets/` and the expanded approval notification in `Sources/NotificationContent/`. `NotchBuddy/Resources/sounds/` — the 28 WAV sounds. `NotchBuddy/project.yml` — XcodeGen project (never edit the `.xcodeproj` by hand).
-- `NotchBuddy/Sources/CoucouKit/PillCatalog.swift` — single source of truth for all declared pills (workspace tools, agents, AI providers, services). Every pill ID, color, category and subtitle lives here.
-- `docs/SPEC.md`, `docs/INTEGRATIONS.md` — behaviour, views, states, integrations (in French).
-- `design/prototype/notch-buddy.html` — original prototype, the visual source of truth. `design/captures/` — target screenshots.
-- `windows/` — the Tauri app for Windows and Linux: Rust in `src-tauri/`, TypeScript in `src/`, the `coucou-hook` relay in `hook/`. `windows/README.md` lists what differs from the Mac.
-- `docs/*.html` — the GitHub Pages site (privacy, terms, support, legal notice).
-- `relay/` — the Coucou relay, a stateless Cloudflare Worker that forwards the iPhone Live Activity pushes (it holds the APNs key, which must never ship in an app). See `relay/README.md`.
+
+- `app/` — the Tauri 2 app: Rust in `app/src-tauri/`, TypeScript in
+  `app/src/`, the `fedo-hook` relay in `app/hook/`. `app/README.md` lists
+  what differs from the coucou fork it came from.
+- `app/src/core/pills.ts` — single source of truth for every pill
+  (workspace tools, agents, AI providers, services). Every pill ID,
+  color, category and connection method lives here; IDs are stable
+  contract values and are never renamed, even for a pill this build
+  doesn't offer (marked `support: "no"` instead of deleted).
+- `app/src/ghost/engine.ts` — the ghost's animation engine: state
+  machine, tweens, particles. Its body is a plain circle for now
+  (Phase 0 placeholder) — Phase 2 redraws it, in code, without touching
+  the state machine underneath.
+- `docs/AGENTS.md` — the hook relay's third-party agent protocol (still
+  accurate and live, even though only Claude Code and Antigravity get a
+  one-click installer in this build).
+- `docs/FEDO-NOTES.md` — the running decisions/verification/limitations
+  log; read it before assuming something works.
 
 ## Build
+
 ```
-cd NotchBuddy && xcodegen && xcodebuild -scheme NotchBuddy -configuration Debug build
+cd app && npm install && npm run tauri dev
 ```
-Windows and Linux: `cd windows && npm install && npm run tauri dev`
+
+Needs Rust, Node 20+, and the Fedora packages listed in
+[`docs/FEDO-NOTES.md`](docs/FEDO-NOTES.md) (verified against `dnf info`,
+not guessed). `xcodegen`/Xcode/Swift do not apply here — there is no
+macOS app in this fork.
 
 ## Rules
-- Swift 6, SwiftUI + AppKit. No third-party dependencies unless truly unavoidable. The character is drawn in code (`Canvas` + `TimelineView`), no Rive/Lottie/images.
-- Secrets live in the Keychain, never on disk or in git.
-- No telemetry. Network calls only to services the user configured.
-- Never block Claude Code: if the app doesn't answer, the hook exits immediately.
-- Never overwrite `~/.claude/settings.json`: dated backup, merge, show the diff, write only after the user confirms.
-- Never send an email or approve a Claude Code or Codex permission without an explicit click.
-- Performance: 0 % CPU when the island is hidden.
-- Keep the bundle identifier `fr.louisraille.NotchBuddy` (Keychain items, preferences and permissions depend on it).
-- Never restyle what already ships (pills, cards, Settings, chat…): existing views stay exactly as they are in `main`, which is the App Store build. Change the look of an existing view only when explicitly asked.
-- Pill IDs are stable contract values (Keychain, UserDefaults, hook routing): never rename an existing pill ID.
-- New views follow the existing app style. `design/prototype/notch-buddy.html` and `design/captures/` are references for new work, not a reason to change existing views.
-- Every release adds its CHANGELOG.md section, a row in the README Versions table, and commits the regenerated Info.plist with the new version.
+
+- Rust + TypeScript (Tauri 2), no framework on the frontend. The
+  character is drawn in code (Canvas 2D), no Rive/Lottie/image assets.
+- **No API keys anywhere.** All intelligence goes through the `claude`
+  CLI the user is already logged into. No Anthropic/OpenAI/Gemini/Ollama
+  provider code, no OS keychain/Secret Service key storage.
+- No telemetry. Network calls only to services the user configured
+  (today: none that need configuring — Spotify is read locally over
+  MPRIS/D-Bus).
+- Never block Claude Code or Antigravity: if the app doesn't answer, the
+  hook exits immediately.
+- Never overwrite `~/.claude/settings.json` or an agent's own config:
+  dated backup, merge, show the diff, write only after the user confirms
+  (`app/src-tauri/src/config_file.rs`, shared by every installer).
+- Nothing on the machine changes without the user's confirmation — Fedo
+  writes the command, shows it, the user runs it. This applies to every
+  phase, including voice.
+- Performance: ~0% CPU and ≤40 MB RSS when the island is hidden
+  (FEDO.md §3) — event-driven only, no polling loops except where FEDO.md
+  explicitly allows one.
+- Keep the app id `org.fedo.Fedo` (config, data dir and permissions
+  depend on it): config in `~/.config/fedo/`, data in
+  `~/.local/share/fedo/`, hook socket at `$XDG_RUNTIME_DIR/fedo.sock`.
+- Pill IDs are stable contract values: never rename an existing one, even
+  one this build doesn't currently offer.
+- Only Claude Code and Antigravity get a one-click hook installer in
+  Settings → Agents. The relay's underlying protocol still accepts any
+  `--agent <name>` (see `docs/AGENTS.md`) — that part wasn't narrowed,
+  only the installer UI.
+- English only for now; `app/src/i18n/i18n.ts`'s lookup mechanism stays
+  so languages (Hindi first) can be added back without a rewrite.
+- Every phase in `FEDO.md`: run its acceptance checks, commit, write a
+  short report, and stop — don't start the next phase unasked.
