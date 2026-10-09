@@ -1,12 +1,13 @@
-// Interface language — the same ten languages as the Mac (0.2.0).
+// Interface language. English only for now (FEDO.md Phase 0) — the Mac's
+// translation data is gone with NotchBuddy/. The lookup mechanism below stays
+// so languages (Hindi first) can be added back later.
 //
-// Strings are looked up by their English text, like the Mac's catalog:
-// `t("Allow")`, `t("Uploading {name}", { name })`. Two tables, both keyed by
-// the English text:
-// - strings.json, generated from the Mac's Localizable.xcstrings by
-//   scripts/gen-strings.mjs (never edited by hand);
-// - extra.json, the strings only Windows and Linux have, written by hand.
-// A string missing from both, or from one language, shows in English.
+// Strings are looked up by their English text: `t("Allow")`,
+// `t("Uploading {name}", { name })`. Two tables, both keyed by the English
+// text and both currently empty: strings.json (was generated from the Mac's
+// Localizable.xcstrings) and extra.json (written by hand). A string missing
+// from both, or from one language, shows in English — which, with both
+// tables empty, is every string, in the one language this build offers.
 //
 // The Rust side (src-tauri/src/i18n.rs) embeds the same two files and looks up
 // the same way, for the tray menu, notifications and the errors it returns.
@@ -18,21 +19,12 @@
 import MAC from "./strings.json";
 import EXTRA from "./extra.json";
 
-export const LANGUAGE_CODES = ["en", "zh-Hans", "hi", "es", "ar", "fr", "bn", "pt-BR", "ru", "id"] as const;
+export const LANGUAGE_CODES = ["en"] as const;
 export type Language = (typeof LANGUAGE_CODES)[number];
 
-/** The picker's entries, each in its own language, in the Mac's order. */
+/** The picker's entries, each in its own language. */
 export const LANGUAGES: readonly { code: Language; name: string }[] = [
   { code: "en", name: "English" },
-  { code: "zh-Hans", name: "简体中文" },
-  { code: "hi", name: "हिन्दी" },
-  { code: "es", name: "Español" },
-  { code: "ar", name: "العربية" },
-  { code: "fr", name: "Français" },
-  { code: "bn", name: "বাংলা" },
-  { code: "pt-BR", name: "Português (Brasil)" },
-  { code: "ru", name: "Русский" },
-  { code: "id", name: "Bahasa Indonesia" },
 ];
 
 export type Vars = Record<string, string | number>;
@@ -55,9 +47,9 @@ export function isLanguage(code: unknown): code is Language {
 
 /**
  * The language to show: the one picked in Settings when it is one of ours,
- * else the first of the system's languages we have ("pt" and "pt-PT" read as
- * Brazilian Portuguese, "zh-CN", "zh-SG" and "zh" as Simplified Chinese),
- * else English.
+ * else the first of the system's languages we have, else English. English
+ * only for now, so this always ends up "en" — kept so adding a language
+ * later is just adding it to LANGUAGE_CODES/LANGUAGES.
  */
 export function resolveLanguage(picked: string | undefined | null, system: readonly string[] = []): Language {
   if (isLanguage(picked)) return picked;
@@ -65,12 +57,6 @@ export function resolveLanguage(picked: string | undefined | null, system: reado
     const tag = String(raw ?? "").replace(/_/g, "-").toLowerCase();
     if (!tag) continue;
     const base = tag.split("-")[0];
-    if (base === "zh") {
-      // Traditional Chinese is not one of ours: English rather than the wrong script.
-      if (/^zh-(hant|tw|hk|mo)\b/.test(tag)) continue;
-      return "zh-Hans";
-    }
-    if (base === "pt") return "pt-BR";
     const exact = LANGUAGE_CODES.find((c) => c.toLowerCase() === base);
     if (exact) return exact;
   }
@@ -89,9 +75,9 @@ export function language(): Language {
   return current;
 }
 
-/** Arabic reads right to left. */
+/** Arabic reads right to left — not one of the languages this build offers yet. */
 export function isRtl(lang: Language = current): boolean {
-  return lang === "ar";
+  return (lang as string) === "ar";
 }
 
 /** Switches the language. Returns true when it changed (listeners were told). */
@@ -112,7 +98,7 @@ export function onLanguageChange(listener: (lang: Language) => void): () => void
 /**
  * <html lang> follows the language, so the webview picks fitting fonts, and
  * <html data-dir> says which way it reads: the island's CSS turns its text
- * containers right to left with it, leaving Mochi, the pills and the header
+ * containers right to left with it, leaving the ghost, the pills and the header
  * where they are. (The settings window sets `dir` on the whole page.)
  */
 export function applyDocumentLanguage() {
