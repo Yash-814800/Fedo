@@ -1,6 +1,6 @@
-// Coucou runs without a console window: Mochi is the whole UI.
+// Fedo runs without a console window: the ghost is the whole UI.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    coucou_lib::run()
+    fedo_lib::run()
 }

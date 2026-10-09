@@ -1,13 +1,13 @@
 [package]
-name = "coucou"
-description = "Coucou for Windows and Linux — Mochi lives at the top of your screen"
-authors = ["Louis Raille"]
+name = "fedo"
+description = "Fedo — a ghost lives at the top of your Fedora/GNOME screen"
+authors = ["Louis Raille", "the Fedo maintainer"]
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [lib]
-name = "coucou_lib"
+name = "fedo_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -24,16 +24,15 @@ tokio = { version = "1", features = ["net", "io-util", "sync", "time", "rt"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-# Secret Service (GNOME Keyring, KWallet) over D-Bus, encrypted in transit.
-keyring = { version = "3", features = ["sync-secret-service", "crypto-rust"] }
 libc = "0.2"
 # The GTK that Tauri already runs on, to reach its window for layer-shell and
 # the input region. libgtk-layer-shell itself is called directly (platform/linux.rs).
 gtk = "0.18"
-# libdbus, which keyring's Secret Service already links, so nothing new is
-# downloaded: Wayland global shortcuts through the XDG GlobalShortcuts portal
+# libdbus: Wayland global shortcuts through the XDG GlobalShortcuts portal
 # (portal.rs), the Spotify pill over MPRIS (spotify.rs) and "Open terminal"
-# through KWin's scripting (platform/linux_focus.rs).
+# through KWin's scripting (platform/linux_focus.rs). No API keys anywhere in
+# this fork (FEDO.md §0), so unlike the upstream project this no longer also backs
+# a keyring crate's Secret Service storage.
 dbus = "0.9.12"
 # EWMH on X11 for "Open terminal", already in the tree (global-hotkey).
 x11rb = { version = "0.13", default-features = false }

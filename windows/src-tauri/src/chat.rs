@@ -1,10 +1,9 @@
-// The chat, whoever answers it: the conversation, the system prompt, and which
-// provider a turn goes to. Each provider's own wire format lives in its module:
-// claude.rs (Anthropic), openai_compat.rs (OpenAI, Google AI, OpenRouter) and
-// local_chat.rs (Ollama, LM Studio, any OpenAI-compatible server).
-//
-// API keys never leave the credential store and file bytes never cross the IPC
-// boundary: the island sends the question and gets the answer's text back.
+// The chat's conversation state. No provider answers it yet: Phase 0 removed
+// every API-key chat provider (claude.rs, openai_compat.rs, local_chat.rs) per
+// FEDO.md §0 ("no API keys anywhere"). Phase 3 wires `send` to `claude -p`
+// instead — the Conversation/Turn bookkeeping below is kept because that
+// rewrite still needs a plain-text history, just no longer one kept twice in
+// two wire formats.
 
 use std::sync::Mutex;
 
@@ -13,9 +12,6 @@ use serde_json::{json, Value};
 use tauri::AppHandle;
 
 use crate::settings::Settings;
-use crate::{claude, local_chat, openai_compat, secrets};
-
-pub const ANTHROPIC: &str = "anthropic";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -30,7 +26,8 @@ pub struct ChatReply {
     pub text: String,
 }
 
-/// A model a provider offers, for the picker in the chat view.
+/// A model a provider offers, for the picker in the chat view. Unused until
+/// Phase 3 — no provider lists any today.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelInfo {
@@ -40,11 +37,6 @@ pub struct ModelInfo {
 
 // ── Conversation ──────────────────────────────────────────────────────────────
 
-/// The conversation is kept twice: in the wire format of the provider that
-/// answered last (Claude's carries web search blocks no other provider would
-/// understand), and as plain text turns. Switching provider mid-conversation
-/// rebuilds the history from the plain turns, so nothing in one provider's
-/// format is ever sent to another.
 #[derive(Default)]
 pub struct Chat {
     inner: Mutex<Conversation>,
@@ -54,21 +46,14 @@ pub struct Chat {
 struct Conversation {
     /// Bumped by every reset, so an answer that lands after "New chat" is dropped.
     epoch: u64,
-    /// The provider `native` belongs to.
-    owner: Option<String>,
-    native: Vec<Value>,
-    /// `{"role", "content": text}` turns, the same whoever answered.
+    /// `{"role", "content": text}` turns.
     plain: Vec<Value>,
 }
 
-/// What a provider needs to build one turn.
 pub struct Turn {
     epoch: u64,
-    provider: String,
     /// No earlier turn: the file or window context rides along with this one.
     pub first: bool,
-    /// The earlier turns, in this provider's format.
-    pub history: Vec<Value>,
 }
 
 impl Chat {
@@ -78,32 +63,18 @@ impl Chat {
         *c = Conversation { epoch, ..Default::default() };
     }
 
-    /// Starts a turn with `provider`, converting the history if another
-    /// provider answered the previous turns.
-    pub fn begin(&self, provider: &str) -> Turn {
-        let mut c = self.inner.lock().unwrap();
-        if c.owner.as_deref() != Some(provider) {
-            c.native = c.plain.clone();
-            c.owner = Some(provider.to_string());
-        }
-        Turn {
-            epoch: c.epoch,
-            provider: provider.to_string(),
-            first: c.plain.is_empty(),
-            history: c.native.clone(),
-        }
+    pub fn begin(&self) -> Turn {
+        let c = self.inner.lock().unwrap();
+        Turn { epoch: c.epoch, first: c.plain.is_empty() }
     }
 
-    /// Records a finished turn: the user message and the answer in the
-    /// provider's format, and their plain text. Only a successful turn is
+    /// Records a finished turn's plain text. Only a successful turn is
     /// recorded, so the history always matches what the model saw.
-    pub fn commit(&self, turn: &Turn, user: Value, assistant: Value, user_text: &str, answer: &str) {
+    pub fn commit(&self, turn: &Turn, user_text: &str, answer: &str) {
         let mut c = self.inner.lock().unwrap();
-        if c.epoch != turn.epoch || c.owner.as_deref() != Some(turn.provider.as_str()) {
+        if c.epoch != turn.epoch {
             return;
         }
-        c.native.push(user);
-        c.native.push(assistant);
         c.plain.push(json!({ "role": "user", "content": user_text }));
         c.plain.push(json!({ "role": "assistant", "content": answer }));
     }
@@ -111,31 +82,20 @@ impl Chat {
 
 // ── System prompt ─────────────────────────────────────────────────────────────
 
-/// Mochi's instructions. Greets the user by their first name when the account
-/// has one worth using (identity.rs), and only claims web search where the
-/// provider runs it (Claude).
-pub fn system_prompt(web_search: bool) -> String {
-    system_prompt_for(crate::identity::first_name(), web_search)
+/// The ghost's instructions. Greets the user by their first name when the
+/// account has one worth using (identity.rs).
+pub fn system_prompt() -> String {
+    system_prompt_for(crate::identity::first_name())
 }
 
-fn system_prompt_for(first_name: Option<&str>, web_search: bool) -> String {
-    let opening = match first_name {
-        Some(name) => format!("You are Mochi, {name}'s personal AI assistant living at the top of their screen."),
-        None => "You are Mochi, a personal AI assistant living at the top of the user's screen.".to_string(),
-    };
-    let abilities = if web_search {
-        "You have web search access and can help with absolutely anything — research, coding, finding places, recommendations, tasks, questions."
-    } else {
-        "You can help with absolutely anything — research, coding, recommendations, tasks, questions. You have no web access: say so when something needs current information."
-    };
-    format!(
-        "{opening} {abilities} \
-Respond in the user's language. Be thorough and complete — use as much detail as the task requires. \
-Use light Markdown when it helps: short paragraphs, bullet lists, **bold**, `inline code` and fenced code blocks. Avoid tables and big headings: the chat window is small."
-    )
+fn system_prompt_for(first_name: Option<&str>) -> String {
+    match first_name {
+        Some(name) => format!("You are Fedo, {name}'s personal assistant living at the top of their screen."),
+        None => "You are Fedo, a personal assistant living at the top of the user's screen.".to_string(),
+    }
 }
 
-/// The window context line, as ClaudeService.chat() writes it.
+/// The window context line, as the chat view sends it along.
 pub fn window_line(app_name: &str, title: &str, url: Option<&str>) -> String {
     let mut text = format!("Context — App: {app_name}, Window: {title}");
     if let Some(url) = url {
@@ -155,26 +115,9 @@ pub fn plain_question(first: bool, context: Option<&ChatContext>, query: &str) -
     }
 }
 
-// ── Which provider ────────────────────────────────────────────────────────────
-
-/// The model chosen for `provider`, or its default.
-pub fn model_for(settings: &Settings, provider: &str) -> String {
-    if provider == ANTHROPIC {
-        let m = settings.model.trim();
-        return if m.is_empty() { claude::DEFAULT_MODEL.to_string() } else { m.to_string() };
-    }
-    settings
-        .chat_models
-        .get(provider)
-        .map(|m| m.trim().to_string())
-        .filter(|m| !m.is_empty())
-        .or_else(|| openai_compat::provider(provider).map(|p| p.default_model.to_string()))
-        .unwrap_or_default()
-}
-
-/// A file rides along only if it is one of Coucou's own copies of a dropped
+/// A file rides along only if it is one of Fedo's own copies of a dropped
 /// file (files.rs puts them in the inbox). The page names the path, so without
-/// this any file the user can read could be sent to a chat provider.
+/// this any file the user can read could be sent along with a question.
 fn checked_context(context: ChatContext) -> Result<ChatContext, String> {
     match context {
         ChatContext::File { name, path } => {
@@ -196,127 +139,50 @@ fn is_inside(dir: &std::path::Path, path: &std::path::Path) -> bool {
         && std::fs::symlink_metadata(&file).map(|m| m.is_file()).unwrap_or(false)
 }
 
-/// One chat turn with the provider chosen in the settings.
+/// Not wired to anything yet — Phase 3 routes this through `claude -p`.
 pub async fn send(
-    app: &AppHandle,
-    chat: &Chat,
-    settings: &Settings,
+    _app: &AppHandle,
+    _chat: &Chat,
+    _settings: &Settings,
     query: String,
     context: Option<ChatContext>,
 ) -> Result<ChatReply, String> {
-    let context = context.map(checked_context).transpose()?;
-    let provider = settings.chat_provider.as_str();
-    let model = model_for(settings, provider);
-    if provider == ANTHROPIC || provider.is_empty() {
-        return claude::send(chat, &model, query, context).await;
+    let _ = query;
+    if let Some(context) = context {
+        checked_context(context)?;
     }
-    if let Some(p) = openai_compat::provider(provider) {
-        return openai_compat::send(chat, p, &model, query, context).await;
-    }
-    if let Some(server) = local_chat::server(settings, provider) {
-        return local_chat::send(app, chat, &server, &model, query, context).await;
-    }
-    Err(format!("Unknown chat provider: {provider}"))
-}
-
-/// The models `provider` offers. Asked only when the user opens the picker on
-/// that provider, and only once it has a key (or, for a local server, an
-/// address): nothing is sent anywhere before that.
-pub async fn models(settings: &Settings, provider: &str) -> Result<Vec<ModelInfo>, String> {
-    let no_key = || crate::i18n::t("No API key — add it in Settings.");
-    if provider == ANTHROPIC {
-        let key = secrets::get(claude::KEY).ok_or_else(no_key)?;
-        return claude::models(&key).await;
-    }
-    if let Some(p) = openai_compat::provider(provider) {
-        let key = secrets::get(p.key).ok_or_else(no_key)?;
-        return openai_compat::models(p, &key).await;
-    }
-    if let Some(server) = local_chat::server(settings, provider) {
-        return local_chat::models(&server).await;
-    }
-    Err(format!("Unknown chat provider: {provider}"))
+    Err(crate::i18n::t("Chat isn't connected yet in this build."))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn turn_texts(history: &[Value]) -> Vec<(String, Value)> {
-        history
-            .iter()
-            .map(|m| (m["role"].as_str().unwrap().to_string(), m["content"].clone()))
-            .collect()
-    }
-
     #[test]
     fn a_turn_is_recorded_only_once_it_succeeds() {
         let chat = Chat::default();
-        let t = chat.begin("anthropic");
+        let t = chat.begin();
         assert!(t.first);
-        assert!(t.history.is_empty());
-        // A failed turn records nothing: the next one is still the first.
-        let t = chat.begin("anthropic");
-        assert!(t.first);
-        chat.commit(&t, json!({"role":"user","content":[{"type":"text","text":"hi"}]}), json!({"role":"assistant","content":[{"type":"text","text":"hello"}]}), "hi", "hello");
-        let t = chat.begin("anthropic");
+        chat.commit(&t, "hi", "hello");
+        let t = chat.begin();
         assert!(!t.first);
-        assert_eq!(t.history.len(), 2);
-        assert!(t.history[0]["content"].is_array());
     }
 
     #[test]
-    fn switching_provider_never_sends_claude_blocks_to_another_one() {
+    fn an_answer_that_lands_after_a_reset_is_dropped() {
         let chat = Chat::default();
-        let t = chat.begin("anthropic");
-        let blocks = json!([
-            {"type":"server_tool_use","id":"srvtoolu_1","name":"web_search","input":{"query":"x"}},
-            {"type":"web_search_tool_result","tool_use_id":"srvtoolu_1","content":[]},
-            {"type":"text","text":"Found it."}
-        ]);
-        chat.commit(&t, json!({"role":"user","content":[{"type":"text","text":"look"}]}), json!({"role":"assistant","content":blocks}), "look", "Found it.");
-
-        let t = chat.begin("openai");
-        assert!(!t.first);
-        assert_eq!(
-            turn_texts(&t.history),
-            vec![("user".into(), json!("look")), ("assistant".into(), json!("Found it."))]
-        );
-        let raw = serde_json::to_string(&t.history).unwrap();
-        assert!(!raw.contains("web_search"), "{raw}");
-
-        // And back: Claude gets the plain turns too, including OpenAI's answer.
-        chat.commit(&t, json!({"role":"user","content":"more"}), json!({"role":"assistant","content":"Sure."}), "more", "Sure.");
-        let t = chat.begin("anthropic");
-        assert_eq!(t.history.len(), 4);
-        assert_eq!(t.history[3], json!({"role":"assistant","content":"Sure."}));
-        assert!(!serde_json::to_string(&t.history).unwrap().contains("web_search"));
-    }
-
-    #[test]
-    fn an_answer_that_lands_after_a_reset_or_a_switch_is_dropped() {
-        let chat = Chat::default();
-        let t = chat.begin("openai");
+        let t = chat.begin();
         chat.reset();
-        chat.commit(&t, json!({"role":"user","content":"q"}), json!({"role":"assistant","content":"a"}), "q", "a");
-        assert!(chat.begin("openai").first);
-
-        let t = chat.begin("openai");
-        let _other = chat.begin("google");
-        chat.commit(&t, json!({"role":"user","content":"q"}), json!({"role":"assistant","content":"a"}), "q", "a");
-        assert!(chat.begin("google").first);
+        chat.commit(&t, "q", "a");
+        assert!(chat.begin().first);
     }
 
     #[test]
-    fn the_prompt_greets_by_first_name_and_claims_web_search_only_for_claude() {
-        let p = system_prompt_for(Some("Louis"), true);
-        assert!(p.starts_with("You are Mochi, Louis's personal AI assistant living at the top of their screen."));
-        assert!(p.contains("web search access"));
-        assert!(p.contains("light Markdown"));
-        let p = system_prompt_for(None, false);
-        assert!(p.starts_with("You are Mochi, a personal AI assistant living at the top of the user's screen."));
-        assert!(!p.contains("web search"));
-        assert!(p.contains("no web access"));
+    fn the_prompt_greets_by_first_name() {
+        let p = system_prompt_for(Some("Louis"));
+        assert!(p.starts_with("You are Fedo, Louis's personal assistant living at the top of their screen."));
+        let p = system_prompt_for(None);
+        assert!(p.starts_with("You are Fedo, a personal assistant living at the top of the user's screen."));
     }
 
     #[test]
@@ -330,22 +196,8 @@ mod tests {
     }
 
     #[test]
-    fn the_model_comes_from_the_settings_or_the_provider_default() {
-        let mut s = Settings::default();
-        assert_eq!(model_for(&s, "anthropic"), claude::DEFAULT_MODEL);
-        assert_eq!(model_for(&s, "openai"), openai_compat::provider("openai").unwrap().default_model);
-        assert_eq!(model_for(&s, "ollama"), "");
-        s.chat_models.insert("openai".into(), " gpt-x ".into());
-        s.chat_models.insert("ollama".into(), "llama3.2".into());
-        s.model = "claude-haiku-4-5".into();
-        assert_eq!(model_for(&s, "openai"), "gpt-x");
-        assert_eq!(model_for(&s, "ollama"), "llama3.2");
-        assert_eq!(model_for(&s, "anthropic"), "claude-haiku-4-5");
-    }
-
-    #[test]
     fn only_files_in_the_inbox_ride_along() {
-        let base = std::env::temp_dir().join(format!("coucou-chat-ctx-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("fedo-chat-ctx-{}", std::process::id()));
         let inbox = base.join("inbox");
         std::fs::create_dir_all(inbox.join("sub")).unwrap();
         std::fs::write(inbox.join("a.txt"), b"a").unwrap();

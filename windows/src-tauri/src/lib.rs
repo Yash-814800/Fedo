@@ -1,37 +1,28 @@
-// Coucou for Windows — app wiring and the commands the island calls.
+// Fedo — app wiring and the commands the island calls.
 
 mod agent_hooks;
 mod agents;
 mod chat;
-mod claude;
-mod codex_plan;
 mod config_file;
 mod desktop;
 mod files;
-mod github;
 mod hooks;
 mod i18n;
 mod identity;
-mod integrations;
 mod island;
-mod local_chat;
 mod log;
 mod net;
-mod openai_compat;
 mod pipe;
 mod platform;
 #[cfg(target_os = "linux")]
 mod portal;
 mod recap;
-mod secrets;
 mod session_window;
 mod settings;
 mod shortcuts;
 mod sounds;
 mod spotify;
 mod tray;
-#[cfg(windows)]
-mod webview_drop;
 
 use std::process::Command;
 use std::sync::atomic::Ordering;
@@ -41,7 +32,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_autostart::{ManagerExt, MacosLauncher};
 
-use chat::{Chat, ChatContext, ChatReply, ModelInfo};
+use chat::{Chat, ChatContext, ChatReply};
 use files::DroppedFile;
 use hooks::{HookPreview, HookStatus};
 use island::{PollGate, ScreenInfo};
@@ -89,9 +80,9 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
         let screen_changed = current.screen != settings.screen;
         let autostart_changed = current.autostart != settings.autostart;
         let shortcuts_changed = current.shortcuts != settings.shortcuts;
-        // Where Mochi sits on the desktop is desktop.rs's to say, not a webview's.
+        // Where the ghost sits on the desktop is desktop.rs's to say, not a webview's.
         let mut settings = settings.clone();
-        settings.desktop_mochi = current.desktop_mochi.clone();
+        settings.desktop_ghost = current.desktop_ghost.clone();
         *current = settings;
         (screen_changed, autostart_changed, shortcuts_changed)
     };
@@ -103,14 +94,13 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
         let manager = app.autolaunch();
         let result = if settings.autostart { manager.enable() } else { manager.disable() };
         if let Err(err) = result {
-            eprintln!("[coucou] autostart: {err}");
+            eprintln!("[fedo] autostart: {err}");
         }
     }
     if screen_changed {
         let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
         island::apply_geometry(&app, &settings.screen, collapsed);
     }
-    integrations::settings_saved(&app, &settings.active_integrations);
     spotify::sync(&app, &settings.active_integrations);
     if shortcuts_changed {
         shortcuts::apply(&app, &settings.shortcuts);
@@ -136,7 +126,7 @@ fn set_system_languages(app: AppHandle, languages: Vec<String>) {
 fn language_changed(app: &AppHandle) {
     tray::retitle(app);
     if let Some(window) = app.get_webview_window("settings") {
-        let _ = window.set_title(&i18n::t("Settings — Coucou"));
+        let _ = window.set_title(&i18n::t("Settings — Fedo"));
     }
 }
 
@@ -295,13 +285,6 @@ fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
-/// Tray → Pause. Paused means paused: the pollers stop talking to the network,
-/// not just the island stopping showing things.
-#[tauri::command]
-fn set_paused(paused: bool) {
-    integrations::set_paused(paused);
-}
-
 // ── Claude Code hooks ─────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -309,7 +292,7 @@ fn hooks_status() -> HookStatus {
     hooks::status()
 }
 
-/// Pill ID → whether that agent's hooks reach Coucou. Read-only.
+/// Pill ID → whether that agent's hooks reach Fedo. Read-only.
 #[tauri::command]
 fn agent_hooks_status() -> std::collections::HashMap<String, bool> {
     agent_hooks::status()
@@ -401,13 +384,6 @@ fn status_line_apply(
     Ok(backup)
 }
 
-/// Codex plan usage, asked of the Codex CLI (`codex app-server`) when its pill
-/// shows. Off the main thread: it can take a few seconds.
-#[tauri::command]
-async fn codex_plan_usage() -> Option<serde_json::Value> {
-    tauri::async_runtime::spawn_blocking(codex_plan::read).await.ok().flatten()
-}
-
 #[tauri::command]
 fn approval_decision(app: AppHandle, request_id: String, decision: String) {
     recap::record_decision(&app, &request_id, &decision);
@@ -442,10 +418,9 @@ fn approval_decline(app: AppHandle, request_id: String) {
     pipe::decline(&app, &request_id);
 }
 
-// ── Chat, files and secrets ───────────────────────────────────────────────────
+// ── Chat and files ────────────────────────────────────────────────────────────
 
-/// One chat turn with the provider picked in the chat view. API keys and any
-/// file bytes stay on the Rust side.
+/// One chat turn. Not wired to anything yet — see chat.rs.
 #[tauri::command]
 async fn chat_send(
     app: AppHandle,
@@ -458,27 +433,6 @@ async fn chat_send(
     chat::send(&app, &chat, &settings, query, context).await
 }
 
-/// The models a provider offers, for the picker in the chat view. Only asked
-/// once the user picked that provider, and only with its key or address.
-#[tauri::command]
-async fn chat_models(shared: State<'_, Shared>, provider: String) -> Result<Vec<ModelInfo>, String> {
-    let settings = shared.settings.lock().unwrap().clone();
-    chat::models(&settings, &provider).await
-}
-
-/// Settings → Local models → Connect: does the server answer, and with which models?
-#[tauri::command]
-async fn local_connect(provider: String, url: String) -> Result<local_chat::Connected, String> {
-    local_chat::connect(&provider, &url).await
-}
-
-/// Stores the custom server's key for the address typed next to it; it is only
-/// ever sent to that address.
-#[tauri::command]
-fn local_set_key(url: String, key: String) -> Result<(), String> {
-    local_chat::set_custom_key(&url, &key)
-}
-
 #[tauri::command]
 fn chat_reset(chat: State<Chat>) {
     chat.reset();
@@ -488,59 +442,6 @@ fn chat_reset(chat: State<Chat>) {
 #[tauri::command]
 fn ingest_file(path: String) -> Result<DroppedFile, String> {
     files::ingest(&path)
-}
-
-/// The island may only ask whether a key exists — never read it.
-#[tauri::command]
-fn secret_present(key: String) -> bool {
-    secrets::present(&key)
-}
-
-#[tauri::command]
-fn secret_set(app: AppHandle, key: String, value: String) -> Result<(), String> {
-    // Bound to its server's address: only local_set_key may store it.
-    if key == local_chat::CUSTOM_KEY {
-        return Err("use local_set_key".into());
-    }
-    let before = (key == "github-token").then(|| secrets::get(&key));
-    secrets::set(&key, &value)?;
-    if let Some(before) = before {
-        if secrets::get(&key) != before {
-            integrations::github_token_changed(&app);
-        }
-    }
-    Ok(())
-}
-
-#[tauri::command]
-fn secret_clear(app: AppHandle, key: String) -> Result<(), String> {
-    let had = key == "github-token" && secrets::present(&key);
-    secrets::clear(&key)?;
-    if had {
-        integrations::github_token_changed(&app);
-    }
-    Ok(())
-}
-
-/// Opens the configured n8n instance — the URL lives in the Credential Manager.
-#[tauri::command]
-fn open_n8n() {
-    if let Some(url) = secrets::get("n8n-url") {
-        open_url(url);
-    }
-}
-
-/// Refresh buttons in the integration cards.
-#[tauri::command]
-async fn refresh_integration(app: AppHandle, id: String) {
-    integrations::poll_once(app, &id).await;
-}
-
-/// The GitHub card was opened: refetch its `section` ("pulse" or "activity")
-/// if it is stale. The pollers still decline while the pill is off or paused.
-#[tauri::command]
-fn github_refresh(section: String) {
-    integrations::github_refresh_if_stale(&section);
 }
 
 /// Lets the island write to the same log as the Rust side.
@@ -598,7 +499,7 @@ fn create_settings_window(app: &AppHandle) {
     let url = settings_page_url(app);
     match WebviewWindowBuilder::new(app, "settings", url)
         .additional_browser_args(BROWSER_ARGS)
-        .title(i18n::t("Settings — Coucou"))
+        .title(i18n::t("Settings — Fedo"))
         .inner_size(560.0, 680.0)
         .min_inner_size(460.0, 480.0)
         .resizable(true)
@@ -643,7 +544,7 @@ pub fn run() {
 
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            // `coucou --shortcut <action>`: what a desktop's own keyboard
+            // `fedo --shortcut <action>`: what a desktop's own keyboard
             // settings run where we can't listen for keys ourselves (Wayland).
             match shortcuts::from_args(&argv) {
                 Some(action) => shortcuts::dispatch(app, action),
@@ -691,26 +592,15 @@ pub fn run() {
             agent_hooks_apply,
             status_line_preview,
             status_line_apply,
-            codex_plan_usage,
             approval_decision,
             approval_answer,
             approval_ack,
             approval_decline,
             log_line,
             chat_send,
-            chat_models,
-            local_connect,
-            local_set_key,
             chat_reset,
             ingest_file,
-            secret_present,
-            secret_set,
-            secret_clear,
-            refresh_integration,
-            github_refresh,
-            open_n8n,
             open_settings_window,
-            set_paused,
             shortcuts_status,
             shortcuts_suspend,
             recap::recap_history,
@@ -721,16 +611,16 @@ pub fn run() {
             recap::recap_clear,
             recap::recap_save_png,
             recap::recap_reveal_saved,
-            desktop::desktop_mochi_info,
-            desktop::desktop_mochi_pick_up,
-            desktop::desktop_mochi_carry,
-            desktop::desktop_mochi_carry_end,
-            desktop::desktop_mochi_drag_begin,
-            desktop::desktop_mochi_drag_move,
-            desktop::desktop_mochi_drag_end,
-            desktop::desktop_mochi_fly_out,
-            desktop::desktop_mochi_fly_home,
-            desktop::desktop_mochi_set_asleep,
+            desktop::desktop_ghost_info,
+            desktop::desktop_ghost_pick_up,
+            desktop::desktop_ghost_carry,
+            desktop::desktop_ghost_carry_end,
+            desktop::desktop_ghost_drag_begin,
+            desktop::desktop_ghost_drag_move,
+            desktop::desktop_ghost_drag_end,
+            desktop::desktop_ghost_fly_out,
+            desktop::desktop_ghost_fly_home,
+            desktop::desktop_ghost_set_asleep,
             sounds::custom_sounds,
             sounds::custom_sound,
             sounds::reveal_sounds_folder,
@@ -745,7 +635,7 @@ pub fn run() {
             tray::build(&handle)?;
             // Before the island: see create_settings_window.
             create_settings_window(&handle);
-            // Same rule for Mochi's desktop window.
+            // Same rule for the ghost's desktop window.
             desktop::setup(&handle);
 
             if let Some(win) = island::window(&handle) {
@@ -757,8 +647,6 @@ pub fn run() {
                     }
                 });
                 platform::make_non_activating(&win);
-                #[cfg(windows)]
-                webview_drop::install(&handle);
                 island::apply_geometry(&handle, &loaded.screen, false);
                 let _ = win.show();
             }
@@ -771,16 +659,15 @@ pub fn run() {
             gate.set_active(true);
             island::spawn_cursor_poll(handle.clone(), gate.clone());
 
-            log::line(format!("--- Coucou {} started ---", env!("CARGO_PKG_VERSION")));
+            log::line(format!("--- Fedo {} started ---", env!("CARGO_PKG_VERSION")));
             hooks::ensure_hook_exe(&handle);
             pipe::start(handle.clone());
-            integrations::start(handle.clone());
             spotify::sync(&handle, &loaded.active_integrations);
             shortcuts::apply(&handle, &loaded.shortcuts);
             Ok(())
         })
         .run(tauri::generate_context!())
-        .expect("error while running Coucou");
+        .expect("error while running Fedo");
 }
 
 #[cfg(test)]
@@ -789,7 +676,7 @@ mod tests {
 
     #[test]
     fn only_an_existing_file_by_its_full_path_reaches_the_editor() {
-        let dir = std::env::temp_dir().join(format!("coucou-diff-file-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("fedo-diff-file-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("edited.ts");
         std::fs::write(&file, "x").unwrap();

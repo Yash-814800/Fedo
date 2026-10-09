@@ -1,5 +1,5 @@
 // Preferences, stored as plain JSON in settings.json under platform::config_dir().
-// No secret ever lands here — API keys live in the OS keychain (see secrets.rs).
+// No secret ever lands here — this fork keeps no API keys anywhere (FEDO.md §0).
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -27,56 +27,38 @@ pub struct Settings {
     pub screen: String,
     pub autostart: bool,
     pub hooks_installed: bool,
-    /// Claude model used by the chat. Changeable in the settings window.
+    /// Claude model for the chat, once Phase 3 wires it to `claude -p`.
+    /// Empty means "let `claude -p` pick its own default".
     pub model: String,
     /// Show the Claude plan pill (5 h and weekly limits) in the island's header.
     /// Off until the user turns it on, so the header stays as it shipped.
     pub show_plan_in_notch: bool,
-    /// Coucou's status line relay is the one in Claude Code's settings.json.
+    /// Fedo's status line relay is the one in Claude Code's settings.json.
     /// Like `hooks_installed`, the real state wins at launch over what was stored.
     pub plan_relay_installed: bool,
-    /// Show the Codex plan pill (5 h / weekly limits from `codex app-server`).
-    /// Off by default; nothing is installed for it.
-    pub show_codex_plan_in_notch: bool,
-    /// Who the chat talks to: "anthropic", a cloud provider of
-    /// openai_compat.rs ("openai", "google", "openrouter"), or a model server
-    /// of local_chat.rs ("ollama", "lmstudio", "custom"). Picked in the chat view.
-    pub chat_provider: String,
-    /// The model picked for each provider other than Anthropic (whose model is
-    /// `model`), by provider id.
-    pub chat_models: BTreeMap<String, String>,
-    /// Addresses of the model servers once connected; empty means not connected.
-    pub ollama_url: String,
-    pub lmstudio_url: String,
-    /// Any other OpenAI-compatible server; its key, if any, is in the keychain.
-    pub custom_url: String,
     /// Global shortcuts the user changed, by action id; the others keep their
     /// default (see shortcuts.rs).
     pub shortcuts: crate::shortcuts::Bindings,
-    /// Mochi's outfit, picked in the wardrobe: "auto" (dresses for the
-    /// season), "none" or an outfit id — the Mac's raw values. The island reads
-    /// anything it doesn't know as "auto", so the value is stored as it comes.
-    pub mochi_outfit: String,
-    /// A colour of the user's own for a pill's Mochi, by pill ID ("#RRGGBB"),
+    /// A colour of the user's own for a pill's ghost, by pill ID ("#RRGGBB"),
     /// picked in Settings → Active pills. Empty means the catalog's colours.
-    /// Kept as it comes, like `mochi_outfit`: src/core/pill-colors.ts reads
-    /// whatever is not a colour as "no choice".
+    /// Kept as it comes: src/core/pill-colors.ts reads whatever is not a
+    /// colour as "no choice".
     pub pill_colors: BTreeMap<String, String>,
     /// Interface language: "" follows the system, else one of i18n::LANGUAGES
-    /// ("fr", "pt-BR", "zh-Hans"…). Kept as it comes, like `mochi_outfit`: a
-    /// code this build doesn't know reads as "".
+    /// ("fr", "pt-BR", "zh-Hans"…). Kept as it comes: a code this build
+    /// doesn't know reads as "".
     pub language: String,
-    /// Mochi on the desktop: whether he lives there, and his spot. Owned by
-    /// the Rust side (desktop.rs) — what a webview sends back is ignored.
-    pub desktop_mochi: DesktopMochiPref,
+    /// The ghost on the desktop: whether it lives there, and its spot. Owned
+    /// by the Rust side (desktop.rs) — what a webview sends back is ignored.
+    pub desktop_ghost: DesktopGhostPref,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
-pub struct DesktopMochiPref {
-    /// He was on the desktop when the app quit: he flies back out at launch.
+pub struct DesktopGhostPref {
+    /// It was on the desktop when the app quit: it flies back out at launch.
     pub on_desktop: bool,
-    /// Top-left corner of his window where the user last left him.
+    /// Top-left corner of its window where the user last left it.
     pub spot: Option<DesktopSpot>,
 }
 
@@ -88,10 +70,6 @@ pub struct DesktopSpot {
     pub space: String,
 }
 
-fn default_model() -> String {
-    crate::claude::DEFAULT_MODEL.to_string()
-}
-
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -100,30 +78,19 @@ impl Default for Settings {
             auto_close_interval: 15.0,
             open_on_hover: false,
             absence_interval: 180.0,
-            active_integrations: vec![
-                "integration_resend".into(),
-                "integration_n8n".into(),
-                "integration_vercel".into(),
-                "integration_github".into(),
-            ],
+            active_integrations: Vec::new(),
             main_pill: "integration_claude".into(),
             screen: "primary".into(),
             autostart: false,
             hooks_installed: false,
-            model: default_model(),
+            // Empty means "let `claude -p` pick its own default" (Phase 3).
+            model: String::new(),
             show_plan_in_notch: false,
             plan_relay_installed: false,
-            show_codex_plan_in_notch: false,
-            chat_provider: crate::chat::ANTHROPIC.into(),
-            chat_models: BTreeMap::new(),
-            ollama_url: String::new(),
-            lmstudio_url: String::new(),
-            custom_url: String::new(),
             shortcuts: Default::default(),
-            mochi_outfit: "auto".into(),
             pill_colors: BTreeMap::new(),
             language: String::new(),
-            desktop_mochi: DesktopMochiPref::default(),
+            desktop_ghost: DesktopGhostPref::default(),
         }
     }
 }
@@ -161,7 +128,7 @@ fn not_loaded() -> MutexGuard<'static, Vec<PathBuf>> {
     NOT_LOADED.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// One line in coucou.log. Tests must never write to the real one.
+/// One line in fedo.log. Tests must never write to the real one.
 fn note(message: String) {
     #[cfg(not(test))]
     crate::log::line(message);
@@ -206,7 +173,7 @@ fn salvage(fields: Map<String, Value>) -> Settings {
 
 /// The log line for a field `salvage` had to drop. The name comes straight from
 /// the file, so it is written escaped: a line break in it must not be able to
-/// start what looks like another line of coucou.log.
+/// start what looks like another line of fedo.log.
 fn unusable_field(key: &str) -> String {
     format!("settings.json: {key:?} is not usable — its default is used instead")
 }
@@ -359,7 +326,7 @@ fn save_to(path: &Path, settings: &Settings) -> std::io::Result<()> {
 
     // Write beside the target and rename over it: a crash, a full disk or a
     // power cut leaves the previous settings.json intact rather than half a file.
-    let temp = path.with_extension(format!("json.coucou-{}", std::process::id()));
+    let temp = path.with_extension(format!("json.fedo-{}", std::process::id()));
     let written = std::fs::File::create(&temp)
         .and_then(|mut file| write_whole(&mut file, &json))
         .and_then(|()| std::fs::rename(&temp, path));
@@ -382,25 +349,18 @@ mod tests {
   "autoCloseInterval": 30.0,
   "openOnHover": true,
   "absenceInterval": 60.0,
-  "activeIntegrations": ["integration_notion"],
-  "mainPill": "agent_cursor",
+  "activeIntegrations": ["agent_antigravity"],
+  "mainPill": "agent_antigravity",
   "screen": "cursor",
   "autostart": true,
   "hooksInstalled": true,
   "model": "some-model",
   "showPlanInNotch": true,
   "planRelayInstalled": true,
-  "showCodexPlanInNotch": true,
-  "chatProvider": "ollama",
-  "chatModels": { "ollama": "llama3.2", "openai": "gpt-x" },
-  "ollamaUrl": "http://127.0.0.1:11434",
-  "lmstudioUrl": "http://127.0.0.1:1234",
-  "customUrl": "https://llm.example.com",
   "shortcuts": { "openChat": { "keys": "Ctrl+Shift+K", "enabled": false } },
-  "mochiOutfit": "witchHat",
   "pillColors": { "integration_claude": "#2DD4BF" },
   "language": "pt-BR",
-  "desktopMochi": { "onDesktop": true, "spot": { "x": 1500.5, "y": -300.0, "space": "screen" } }
+  "desktopGhost": { "onDesktop": true, "spot": { "x": 1500.5, "y": -300.0, "space": "screen" } }
 }"##;
 
     fn custom() -> Value {
@@ -429,7 +389,7 @@ mod tests {
     /// A fresh directory of our own, and the settings.json it will hold.
     fn scratch(name: &str) -> (PathBuf, PathBuf) {
         let dir = std::env::temp_dir()
-            .join(format!("coucou-settings-{name}-{}", std::process::id()));
+            .join(format!("fedo-settings-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("settings.json");
@@ -483,50 +443,34 @@ mod tests {
     }
 
     #[test]
-    fn a_file_from_before_the_model_setting_keeps_everything_else() {
-        let loaded = shown(&parse(&custom_with("model", None)).unwrap());
-        let mut expected = custom();
-        expected["model"] = json!(crate::claude::DEFAULT_MODEL);
-        assert_eq!(loaded, expected);
-    }
-
-    #[test]
-    fn a_file_from_before_the_wardrobe_dresses_mochi_for_the_seasons() {
-        let loaded = parse(&custom_with("mochiOutfit", None)).unwrap();
-        assert_eq!(loaded.mochi_outfit, "auto");
+    fn a_file_from_before_the_desktop_ghost_keeps_it_in_the_island() {
+        let loaded = parse(&custom_with("desktopGhost", None)).unwrap();
+        assert_eq!(loaded.desktop_ghost, DesktopGhostPref::default());
+        assert!(!loaded.desktop_ghost.on_desktop);
         assert_eq!(loaded.model, "some-model");
-        assert!(!loaded.sound_enabled);
-    }
-
-    #[test]
-    fn a_file_from_before_the_desktop_mochi_keeps_him_in_the_island() {
-        let loaded = parse(&custom_with("desktopMochi", None)).unwrap();
-        assert_eq!(loaded.desktop_mochi, DesktopMochiPref::default());
-        assert!(!loaded.desktop_mochi.on_desktop);
-        assert_eq!(loaded.mochi_outfit, "witchHat");
     }
 
     #[test]
     fn a_half_written_desktop_spot_costs_only_the_spot() {
         let loaded = parse(&custom_with(
-            "desktopMochi",
+            "desktopGhost",
             Some(json!({ "onDesktop": true, "spot": { "x": "left" } })),
         ))
         .unwrap();
         // The whole field falls back, and nothing else does.
-        assert_eq!(loaded.desktop_mochi, DesktopMochiPref::default());
+        assert_eq!(loaded.desktop_ghost, DesktopGhostPref::default());
         assert_eq!(loaded.model, "some-model");
 
-        let loaded = parse(&custom_with("desktopMochi", Some(json!({ "onDesktop": true })))).unwrap();
-        assert!(loaded.desktop_mochi.on_desktop);
-        assert_eq!(loaded.desktop_mochi.spot, None);
+        let loaded = parse(&custom_with("desktopGhost", Some(json!({ "onDesktop": true })))).unwrap();
+        assert!(loaded.desktop_ghost.on_desktop);
+        assert_eq!(loaded.desktop_ghost.spot, None);
     }
 
     #[test]
     fn a_file_from_before_the_colours_paints_every_pill_as_the_catalog_says() {
         let loaded = parse(&custom_with("pillColors", None)).unwrap();
         assert!(loaded.pill_colors.is_empty());
-        assert_eq!(loaded.mochi_outfit, "witchHat");
+        assert_eq!(loaded.model, "some-model");
     }
 
     #[test]
@@ -541,12 +485,7 @@ mod tests {
     }
 
     #[test]
-    fn an_outfit_this_build_does_not_know_is_kept_as_written() {
-        // A newer build may add outfits: the island shows "auto" for it, but
-        // the choice must survive a save made by this one.
-        let loaded = parse(&custom_with("mochiOutfit", Some(json!("topHat")))).unwrap();
-        assert_eq!(loaded.mochi_outfit, "topHat");
-        // The language too: "" (follow the system) when absent, as it comes otherwise.
+    fn the_language_follows_the_system_when_absent_and_is_kept_as_it_comes_otherwise() {
         assert_eq!(parse(&custom_with("language", None)).unwrap().language, "");
         assert_eq!(parse(&custom_with("language", Some(json!("xx")))).unwrap().language, "xx");
     }
@@ -567,8 +506,8 @@ mod tests {
         for (key, wrong) in [
             ("soundVolume", json!("loud")),
             ("soundEnabled", json!(1)),
-            ("activeIntegrations", json!("integration_n8n")),
-            ("mainPill", json!(["agent_cursor"])),
+            ("activeIntegrations", json!("agent_antigravity")),
+            ("mainPill", json!(["agent_antigravity"])),
             ("screen", Value::Null),
             ("shortcuts", json!("Ctrl+Alt+A")),
         ] {
@@ -793,17 +732,10 @@ mod tests {
                 "model",
                 "showPlanInNotch",
                 "planRelayInstalled",
-                "showCodexPlanInNotch",
-                "chatProvider",
-                "chatModels",
-                "ollamaUrl",
-                "lmstudioUrl",
-                "customUrl",
                 "shortcuts",
-                "mochiOutfit",
                 "pillColors",
                 "language",
-                "desktopMochi",
+                "desktopGhost",
             ]
         );
         let _ = std::fs::remove_dir_all(&dir);
@@ -833,7 +765,7 @@ mod tests {
         // directory squatting on that name, the write cannot even start.
         let (dir, file) = scratch("blocked");
         std::fs::write(&file, CUSTOM).unwrap();
-        let temp = dir.join(format!("settings.json.coucou-{}", std::process::id()));
+        let temp = dir.join(format!("settings.json.fedo-{}", std::process::id()));
         std::fs::create_dir(&temp).unwrap();
 
         assert!(save_to(&file, &Settings::default()).is_err());
