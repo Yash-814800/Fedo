@@ -1,6 +1,7 @@
-// Draws Mochi into the PNG/ICO set Tauri needs. No dependencies: the icons are
-// rasterised here and encoded with node:zlib, so the app icon stays "drawn in
-// code" like the character itself.
+// Draws the Phase 0 placeholder ghost into the PNG set Tauri needs. No
+// dependencies: the icons are rasterised here and encoded with node:zlib,
+// so the app icon stays "drawn in code" like the character itself. Phase 2
+// redraws this for the real ghost design.
 //
 //   node scripts/gen-icons.mjs
 
@@ -11,7 +12,7 @@ import { fileURLToPath } from "node:url";
 
 const OUT = join(dirname(fileURLToPath(import.meta.url)), "..", "src-tauri", "icons");
 
-// ── Mochi ─────────────────────────────────────────────────────────────────────
+// ── The ghost ─────────────────────────────────────────────────────────────────
 
 const BASE_TOP = [255, 250, 245]; // #FFFAF5
 const BASE_BOTTOM = [221, 204, 191]; // #DDCCBF
@@ -20,10 +21,9 @@ const RIM = [0, 0, 0];
 
 const SS = 4; // supersampling factor
 
-/** Superellipse (exponent 2.7) test in body-local coordinates. */
+/** Plain circle — the Phase 0 placeholder body, same shape as engine.ts's. */
 function insideBody(x, y, rx, ry) {
-  const n = 2.7;
-  return Math.pow(Math.abs(x / rx), n) + Math.pow(Math.abs(y / ry), n) <= 1;
+  return (x / rx) ** 2 + (y / ry) ** 2 <= 1;
 }
 
 function insidePill(x, y, w, h) {
@@ -35,7 +35,7 @@ function insidePill(x, y, w, h) {
   return (x - cx) ** 2 + (y - cy) ** 2 <= r * r;
 }
 
-function renderMochi(size) {
+function renderGhost(size) {
   const px = new Uint8Array(size * size * 4);
   const R = size * 0.34;
   const rx = R * 1.14;
@@ -44,7 +44,7 @@ function renderMochi(size) {
   const cy = size / 2 + R * 0.06;
   const rim = R * 0.055; // dark outline so the tray icon reads on light themes
 
-  // Eyes — same geometry as BotEngine (yaw ±0.37, pitch −0.12)
+  // Eyes — same geometry as the engine's (yaw ±0.37, pitch −0.12)
   const eyeYaw = 0.37;
   const eyePitch = -0.12;
   const cp = Math.cos(eyePitch);
@@ -182,7 +182,7 @@ function encodeICO(entries) {
 
 mkdirSync(OUT, { recursive: true });
 
-const png = (size) => encodePNG(size, renderMochi(size));
+const png = (size) => encodePNG(size, renderGhost(size));
 
 const files = {
   "32x32.png": png(32),

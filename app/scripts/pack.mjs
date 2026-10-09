@@ -1,6 +1,5 @@
 // Copies the packages Tauri buries in target/release/bundle/ into
-// windows/release/, with the names they ship under. Used by `npm run pack` and
-// by the release workflows, so both produce exactly the same file names.
+// app/release/, with the names they ship under.
 
 import { readFileSync, mkdirSync, copyFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -18,26 +17,14 @@ const { version } = JSON.parse(readFileSync(join(root, "src-tauri", "tauri.conf.
 const arch = process.arch === "arm64" ? "aarch64" : "x86_64";
 const debArch = process.arch === "arm64" ? "arm64" : "amd64";
 const PACKAGES = {
-  win32: [
-    {
-      dir: "nsis",
-      suffix: "-setup.exe",
-      names: [`Coucou-Windows-${version}-setup.exe`, "Coucou-Windows-setup.exe"],
-    },
-    {
-      dir: "msi",
-      suffix: ".msi",
-      names: [`Coucou-Windows-${version}.msi`, "Coucou-Windows.msi"],
-    },
-  ],
   linux: [
     {
       dir: "appimage",
       suffix: ".AppImage",
-      names: [`Coucou-Linux-${version}-${arch}.AppImage`, `Coucou-Linux-${arch}.AppImage`],
+      names: [`Fedo-${version}-${arch}.AppImage`, `Fedo-${arch}.AppImage`],
     },
-    { dir: "deb", suffix: ".deb", names: [`Coucou-Linux-${version}-${debArch}.deb`] },
-    { dir: "rpm", suffix: ".rpm", names: [`Coucou-Linux-${version}-${arch}.rpm`] },
+    { dir: "deb", suffix: ".deb", names: [`Fedo-${version}-${debArch}.deb`] },
+    { dir: "rpm", suffix: ".rpm", names: [`Fedo-${version}-${arch}.rpm`] },
   ],
 };
 
