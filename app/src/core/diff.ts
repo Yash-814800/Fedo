@@ -1,4 +1,4 @@
-// Live diff — port of DiffEngine.swift (NotchBuddy/Sources/CoucouKit).
+// Live diff — ported from the Mac app's own diff engine.
 //
 // Line diff (LCS) with 3-line context hunks, used for the Edit / MultiEdit /
 // Write tool calls the hooks see. Same size guards as macOS: beyond 200 KB or
