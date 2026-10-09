@@ -1,11 +1,10 @@
-// The desktop Mochi's own window (mochi.html): draws him, and turns clicks and
-// drags on him into pokes, flights home, the wardrobe and a new spot. Port of
-// DesktopBotView + the mouse half of DesktopMochiController (DesktopMochi.swift).
+// The desktop ghost's own window (ghost.html): draws it, and turns clicks and
+// drags on it into pokes, flights home and a new spot.
 //
-// What he shows comes from the island (DESKTOP_EVENTS.state), where he is from
-// Rust. The page draws only while the window is on screen, at 30 fps awake
-// like the Mac, and a few frames a second asleep — with no cursor polling at
-// all while he sleeps.
+// What it shows comes from the island (DESKTOP_EVENTS.state), where it is
+// from Rust. The page draws only while the window is on screen, at 30 fps
+// awake, and a few frames a second asleep — with no cursor polling at all
+// while it sleeps.
 
 import { Bridge, emitToWindow, onEvent, type DesktopMode } from "../core/bridge";
 import type { BotEmoteName } from "../core/layout";
@@ -20,23 +19,23 @@ import {
 const ISLAND = "island";
 
 /**
- * Width Mochi is drawn at. The engine's body radius is 0.3 × width, so this
- * gives the 28.8 px body the hit test uses, and leaves room around him for
- * hats, hands and hearts inside the 120 px window.
+ * Width the ghost is drawn at. The engine's body radius is 0.3 × width, so
+ * this gives the 28.8 px body the hit test uses, and leaves room around it
+ * for hearts and particles inside the 120 px window.
  */
 const DRAW_W = PANEL_SIZE * 0.8;
 const SIDE = (PANEL_SIZE - DRAW_W) / 2;
-/** Frame pacing: TimelineView(minimumInterval: 1/30) awake; asleep, barely. */
+/** Frame pacing, awake; asleep, barely. */
 const AWAKE_FRAME_MS = 1000 / 30;
 const ASLEEP_FRAME_MS = 250;
 
-class DesktopMochi {
+class DesktopGhost {
   private engine = new BotEngine();
   private canvas: HTMLCanvasElement;
   private mode: DesktopMode = "off";
 
   private snap: DesktopSnapshot = {
-    state: "idle", outfit: "none", soundEnabled: true, soundVolume: 0.12, paused: false, dancing: false,
+    state: "idle", soundEnabled: true, soundVolume: 0.12, paused: false, dancing: false,
   };
 
   private visible = false;
@@ -121,7 +120,6 @@ class DesktopMochi {
       this.lastAgentActive = performance.now();
       this.asleep = false;
       this.engine.setState(this.snap.state, true);
-      this.engine.setOutfit(this.snap.outfit, false);
       this.schedule();
       return;
     }
@@ -198,7 +196,6 @@ class DesktopMochi {
     const ctx = this.canvas.getContext("2d");
     if (!ctx) return;
     const engine = this.engine;
-    engine.setOutfit(this.snap.outfit, true);
     if (!this.asleep) {
       // Windows: the global cursor. Linux: only while the pointer is over him.
       const fresh = this.mode === "poll" || now - this.lastPointer < 1500;
@@ -280,7 +277,6 @@ class DesktopMochi {
 
     document.addEventListener("contextmenu", (e) => {
       e.preventDefault();
-      if (isOverBody(this.local(e))) void emitToWindow(ISLAND, DESKTOP_EVENTS.wardrobe);
     });
 
     document.addEventListener("pointerleave", () => {
@@ -356,5 +352,5 @@ class DesktopMochi {
   }
 }
 
-const canvas = document.getElementById("mochi");
-if (canvas instanceof HTMLCanvasElement) void new DesktopMochi(canvas).start();
+const canvas = document.getElementById("ghost");
+if (canvas instanceof HTMLCanvasElement) void new DesktopGhost(canvas).start();

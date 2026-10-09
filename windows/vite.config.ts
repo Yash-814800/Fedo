@@ -3,20 +3,19 @@ import { existsSync, mkdirSync, readdirSync, copyFileSync, createReadStream } fr
 import { resolve, join, extname } from "node:path";
 
 // ───────────────────────────────────────────────────────────────────────────────
-// THE one and only place the shared sound folder is declared.
-// The 29 WAVs live in the macOS app and are NOT duplicated in the repo; when they
-// move to `shared/sounds/`, change this single line.
-export const SOUNDS_DIR = resolve(__dirname, "../NotchBuddy/Resources/sounds");
+// THE one and only place the sound folder is declared. Empty for now — Phase 0
+// ships with no sounds (FEDO.md §1 rule 5: the Mac app's own sounds are rights
+// reserved and are gone with it); Phase 2 generates Fedo's own.
+export const SOUNDS_DIR = resolve(__dirname, "sounds");
 // ───────────────────────────────────────────────────────────────────────────────
 
 /**
  * Serves SOUNDS_DIR at /sounds/*.wav in dev, and copies it into dist/sounds on build.
- * Keeps the WAVs out of windows/ while still shipping them inside the installer.
  */
 function sharedSounds(): Plugin {
   const prefix = "/sounds/";
   return {
-    name: "coucou-shared-sounds",
+    name: "fedo-sounds",
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
         if (!req.url?.startsWith(prefix)) return next();
@@ -63,7 +62,7 @@ export default defineConfig({
       input: {
         island: resolve(__dirname, "index.html"),
         settings: resolve(__dirname, "settings.html"),
-        mochi: resolve(__dirname, "mochi.html"),
+        ghost: resolve(__dirname, "ghost.html"),
       },
     },
   },

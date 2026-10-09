@@ -1,19 +1,17 @@
-// Plan usage in the island: the Claude and Codex pills in the header and the
-// card behind each. Same behaviour as ClaudePlanHeaderPill, ClaudePlanCardView
-// and CodexPlanCardView on the Mac; the numbers and labels come from
-// core/plan.ts.
+// Claude plan usage in the island: the pill in the header and the card behind
+// it. The numbers and labels come from core/plan.ts.
 //
-// The pills sit in the header's right side, before the gear, on the overview
-// only, Claude first. Clicking one puts its card in place of the overview's
-// left card (clicking it again, or the other pill, closes or swaps it), and
-// Mochi wears the plan's colour while it is open. It closes when the view, the
-// mode or the focused pill changes.
+// The pill sits in the header's right side, before the gear, on the overview
+// only. Clicking it puts its card in place of the overview's left card
+// (clicking it again closes it), and the ghost wears the plan's colour while
+// it is open. It closes when the view, the mode or the focused pill changes.
+//
+// Codex plan usage is gone with Codex (FEDO.md Phase 0: Claude Code and
+// Antigravity are the only two agents this fork keeps).
 
-import { Bridge } from "../core/bridge";
 import {
-  PLAN_TEXT, claudeSubtitle, codexIsStale, codexResetsLabel, codexSubtitle, dominantPct,
-  effectivePct, parseCodexPlan, pillLabel, planColor, resetLabel,
-  type CodexPlanUsage, type PlanUsage, type PlanWindow,
+  PLAN_TEXT, claudeSubtitle, dominantPct, effectivePct, pillLabel, planColor, resetLabel,
+  type PlanUsage, type PlanWindow,
 } from "../core/plan";
 import { State } from "../core/state";
 import { clear, dot, h, svg } from "./dom";
@@ -26,23 +24,16 @@ export function claudePillVisible(): boolean {
   return State.view === "overview" && s.showPlanInNotch && s.planRelayInstalled;
 }
 
-/** The Codex pill is in the header: overview, turned on (nothing to install). */
-export function codexPillVisible(): boolean {
-  return State.view === "overview" && State.settings.showCodexPlanInNotch;
-}
-
 /** A plan card is open and its pill is still there. */
 export function planCardOpen(): boolean {
-  if (!State.showingPlanDetail) return false;
-  return State.planDetailIsCodex ? codexPillVisible() : claudePillVisible();
+  return State.showingPlanDetail && claudePillVisible();
 }
 
 const claudeColor = (now = Date.now()) => planColor(dominantPct(State.planUsage, now));
-const codexColor = (now = Date.now()) => planColor(dominantPct(State.codexPlanUsage, now));
 
-/** The colour of the open card's plan, which Mochi wears while it is open. */
+/** The colour of the open card's plan, which the ghost wears while it is open. */
 export function openPlanColor(): string {
-  return State.planDetailIsCodex ? codexColor() : claudeColor();
+  return claudeColor();
 }
 
 /** Closes the plan card (view, mode or focus changed). */
@@ -52,7 +43,7 @@ export function closePlanCard(): void {
 
 // ── Claude numbers ────────────────────────────────────────────────────────────
 
-const STORE_KEY = "coucou.claudePlanUsage";
+const STORE_KEY = "fedo.claudePlanUsage";
 
 /** New numbers from the status line; kept so they survive a restart, as on the Mac. */
 export function setClaudePlanUsage(usage: PlanUsage): void {
@@ -80,31 +71,6 @@ export function storedClaudePlanUsage(): string | null {
   }
 }
 
-// ── Codex numbers ─────────────────────────────────────────────────────────────
-
-let codexInFlight = false;
-
-/**
- * Asks Codex again when the numbers are missing or older than a minute. Only
- * from the pill (shown or clicked), never on a timer, and never while paused:
- * `codex app-server` talks to Codex's own service.
- */
-export function refreshCodexPlanUsage(): void {
-  if (codexInFlight || State.paused || !codexIsStale(State.codexPlanUsage)) return;
-  codexInFlight = true;
-  void Bridge.codexPlanUsage()
-    .then((result) => {
-      const usage = parseCodexPlan(result);
-      if (usage) {
-        State.codexPlanUsage = usage;
-        State.notify();
-      }
-    })
-    .finally(() => {
-      codexInFlight = false;
-    });
-}
-
 // ── Pill ──────────────────────────────────────────────────────────────────────
 
 export interface PlanPill {
@@ -112,32 +78,27 @@ export interface PlanPill {
   sync(): void;
 }
 
-/** One pill: colour dot and label, lit while hovered or while its card is open. */
-export function buildPlanPill(codex: boolean): PlanPill {
+/** The Claude plan pill: colour dot and label, lit while hovered or while its card is open. */
+export function buildPlanPill(): PlanPill {
   const label = h("span", { class: "plan-pill-label" });
   const dotEl = h("i", { class: "plan-pill-dot" });
-  const isOpen = () => State.showingPlanDetail && State.planDetailIsCodex === codex;
   const el = h("button", {
     class: "plan-pill",
-    title: codex ? tl("Codex plan usage") : tl("Claude plan usage"),
+    title: tl("Claude plan usage"),
     onclick: () => {
-      const open = isOpen();
-      State.planDetailIsCodex = codex;
+      const open = State.showingPlanDetail;
       State.showingPlanDetail = !open;
-      if (codex) refreshCodexPlanUsage();
       State.notify();
     },
   }, dotEl, label);
   return {
     el,
     sync() {
-      const color = codex ? codexColor() : claudeColor();
+      const color = claudeColor();
       el.style.setProperty("--plan", color);
-      el.classList.toggle("active", isOpen());
+      el.classList.toggle("active", State.showingPlanDetail);
       dotEl.style.background = color;
-      label.textContent = codex
-        ? pillLabel("Codex", State.codexPlanUsage)
-        : pillLabel("Claude", State.planUsage);
+      label.textContent = pillLabel("Claude", State.planUsage);
     },
   };
 }
@@ -171,24 +132,18 @@ function head(color: string, title: string, subtitle: string): HTMLElement {
   );
 }
 
-/** The card that stands in for the overview's left card while a pill is open. */
+/** The card that stands in for the overview's left card while the pill is open. */
 export class PlanCard {
   readonly el = h("div", { class: "plan-card" });
   private key = "";
 
   /** Re-renders when the numbers change, or every 30 s for the countdowns. */
   sync(now = Date.now()) {
-    const codex = State.planDetailIsCodex;
-    const u = codex ? State.codexPlanUsage : State.planUsage;
-    const key = `${language()}|${codex}|${JSON.stringify(u)}|${Math.floor(now / 30_000)}`;
+    const u = State.planUsage;
+    const key = `${language()}|${JSON.stringify(u)}|${Math.floor(now / 30_000)}`;
     if (key === this.key) return;
     this.key = key;
     clear(this.el);
-    if (codex) this.drawCodex(State.codexPlanUsage, now);
-    else this.drawClaude(State.planUsage, now);
-  }
-
-  private drawClaude(u: PlanUsage | null, now: number) {
     this.el.append(
       head(claudeColor(now), PLAN_TEXT.claudeTitle, claudeSubtitle(u, now)),
       h("div", { class: "plan-rows" },
@@ -196,19 +151,5 @@ export class PlanCard {
         gaugeRow(PLAN_TEXT.week, u?.sevenDay, true, now),
       ),
     );
-  }
-
-  private drawCodex(u: CodexPlanUsage | null, now: number) {
-    const rows = h("div", { class: "plan-rows" });
-    // Codex plans without a 5-hour window show the week alone, as on the Mac.
-    if (u?.fiveHour) rows.append(gaugeRow(PLAN_TEXT.fiveHours, u.fiveHour, false, now));
-    rows.append(
-      gaugeRow(PLAN_TEXT.week, u?.sevenDay, true, now),
-      h("div", { class: "plan-row" },
-        h("span", { class: "plan-label", text: PLAN_TEXT.resets }),
-        h("span", { class: "plan-credits", text: codexResetsLabel(u) }),
-      ),
-    );
-    this.el.append(head(codexColor(now), PLAN_TEXT.codexTitle, codexSubtitle(u, now)), rows);
   }
 }

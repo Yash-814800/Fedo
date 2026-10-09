@@ -10,21 +10,18 @@ import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
-import { renderIntegrationCard, type IntegrationCardHooks } from "./integrations";
 import { highlightRow, listRows, openRow } from "./github";
 import { pillDefinition, sessionSubtitle } from "../core/pills";
 import {
-  PlanCard, buildPlanPill, claudePillVisible, codexPillVisible, planCardOpen, refreshCodexPlanUsage,
+  PlanCard, buildPlanPill, claudePillVisible, planCardOpen,
 } from "./usage";
 import { buildDiffCard } from "./diff";
 import { lastTextStep } from "../core/diff";
 import { Bridge } from "../core/bridge";
 import { buildRecap } from "./recap";
-import { buildWardrobe } from "./wardrobe";
 import { buildSpotifyCard, buildSpotifyPill, type SpotifyPillHost } from "./spotify";
 import { SPOTIFY_ID } from "../core/spotify";
-import type { Outfit, OutfitSelection } from "../mochi/wardrobe";
-import { language, t, tl, type Msg } from "../i18n/i18n";
+import { t, tl, type Msg } from "../i18n/i18n";
 import type { ViewCommand } from "../island/shortcuts";
 
 export interface ViewActions {
@@ -49,10 +46,6 @@ export interface ViewActions {
   setAutoClose(seconds: number): void;
   openSettingsWindow(): void;
   blip(): void;
-  /** Wardrobe click: keeps the outfit ("auto" and "none" included). */
-  chooseOutfit(selection: OutfitSelection): void;
-  /** Wardrobe hover: shows an outfit on Mochi without keeping it; null ends it. */
-  previewOutfit(outfit: Outfit | null): void;
 }
 
 export interface ViewHost {
@@ -113,11 +106,9 @@ export function buildHeader(actions: ViewActions): ViewHost {
 
   const gearBtn = h("button", { title: tl("Settings"), onclick: () => go("settings") }, svg(ICONS.gear, 14));
   const soundBtn = h("button", { title: tl("Mute"), onclick: () => actions.toggleSound() }, svg(ICONS.speakerOn, 14));
-  // Plan usage pills (off by default): before the gear, Claude first, as on the Mac.
-  const claudePill = buildPlanPill(false);
-  const codexPill = buildPlanPill(true);
-  const planPills = h("div", { class: "plan-pills" }, claudePill.el, codexPill.el);
-  let codexShown = false;
+  // Plan usage pill (off by default): before the gear.
+  const claudePill = buildPlanPill();
+  const planPills = h("div", { class: "plan-pills" }, claudePill.el);
 
   function go(v: IslandViewName) {
     actions.blip();
@@ -130,8 +121,6 @@ export function buildHeader(actions: ViewActions): ViewHost {
     h("div", { class: "tabs" }, tabHome, tabChat, tabDrop),
     h("div", { class: "header-actions" }, planPills, gearBtn, soundBtn),
   );
-  const headerActions = el.lastElementChild as HTMLElement;
-
   return {
     el,
     sync() {
@@ -151,18 +140,9 @@ export function buildHeader(actions: ViewActions): ViewHost {
 
   function syncPlanPills() {
     const claudeOn = claudePillVisible();
-    const codexOn = codexPillVisible();
     claudePill.el.style.display = claudeOn ? "" : "none";
-    codexPill.el.style.display = codexOn ? "" : "none";
-    planPills.classList.toggle("on", claudeOn || codexOn);
-    // Both pills: the right side tightens so it still clears the screen edge.
-    headerActions.classList.toggle("both-plans", claudeOn && codexOn);
+    planPills.classList.toggle("on", claudeOn);
     if (claudeOn) claudePill.sync();
-    if (codexOn) codexPill.sync();
-    // Codex is asked when its pill comes into view (stale answers only).
-    const shown = codexOn && State.mode === "expanded";
-    if (shown && !codexShown) refreshCodexPlanUsage();
-    codexShown = shown;
   }
 }
 
@@ -229,23 +209,6 @@ function buildOverview(actions: ViewActions): ViewHost {
     },
     true,
   );
-
-  const hooks: IntegrationCardHooks = {
-    get detailOpen() {
-      return detailOpen;
-    },
-    openDetail() {
-      detailOpen = true;
-      cardKey = "";
-      State.notify();
-    },
-    closeDetail() {
-      detailOpen = false;
-      cardKey = "";
-      State.notify();
-    },
-    openSettings: () => actions.openSettingsWindow(),
-  };
 
   /** The countdowns move every 30 s while a card is open, and only then. */
   function syncPlanTimer(open: boolean) {
@@ -365,19 +328,6 @@ function buildOverview(actions: ViewActions): ViewHost {
           cardKey = "";
         }
         spotifyCard.sync();
-      } else if (task) {
-        const info = State.integrations[task.id];
-        const key = [
-          language(), task.id, task.color, detailOpen, task.state, task.steps.join("|"),
-          info?.loaded, info?.error, info?.configured,
-          JSON.stringify(info?.data ?? {}),
-        ].join("~");
-        if (key !== cardKey) {
-          cardKey = key;
-          mode = "card";
-          clear(leftBody);
-          leftBody.append(renderIntegrationCard(task, hooks));
-        }
       }
 
       jump.style.display = detailOpen || mode === "plan" || mode === "diff" ? "none" : "";
@@ -820,7 +770,6 @@ export function buildViews(
   map.set("uploading", buildUploading());
   map.set("choose", buildChoose(actions));
   map.set("recap", buildRecap(actions));
-  map.set("wardrobe", buildWardrobe(actions));
   // Not in the Windows v1: sending a file by email, window attach + web result.
   map.set("mail", buildPlaceholder(tl("Sending by email isn't in this version."), ""));
   map.set("searching", buildPlaceholder(tl("Claude is searching…"), ""));
