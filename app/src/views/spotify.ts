@@ -108,7 +108,7 @@ function pillButton(color: string, icon: string, onClick: () => void): HTMLEleme
 }
 
 /**
- * SpotifyPill: the agent pill's look, with a mini Mochi that dances while
+ * SpotifyPill: the agent pill's look, with a mini ghost that dances while
  * Spotify plays, and play/pause + next on hover when a track is loaded.
  */
 export function buildSpotifyPill(task: AgentTask, onTap: () => void): SpotifyPillHost {

@@ -1,4 +1,4 @@
-// The island: DOM shell, sizing animation, Mochi placement, mouse handling.
+// The island: DOM shell, sizing animation, ghost placement, mouse handling.
 // Mirrors IslandRootView.swift + IslandWindowController.swift.
 
 import { Tracked, Spring, clamp } from "../core/anim";
@@ -29,7 +29,7 @@ import { DRAG_THRESHOLD } from "../mochi/desktop-logic";
 
 const BOT_OVERHANG = 40;
 const CLAUDE_DESKTOP_ID = "agent_claude-desktop";
-/** Extra canvas on each side of Mochi, for the witch hat's brim and the Santa hat's tip. */
+/** Extra canvas on each side of the ghost. */
 const BOT_SIDE = 24;
 /** Same margin as the Rust hit test (src-tauri/src/island.rs). */
 const HIT_MARGIN = 14;
@@ -44,7 +44,7 @@ const modeOrder = (m: IslandMode) => (m === "hidden" ? 0 : m === "compact" ? 1 :
 
 export class Island {
   readonly fsm = new IslandStateMachine();
-  /** Mochi on the desktop: his life cycle and the drag out of the island. */
+  /** The ghost on the desktop: its life cycle and the drag out of the island. */
   readonly desktop: DesktopLink;
 
   private root: HTMLElement;
@@ -101,7 +101,7 @@ export class Island {
   onGreetingDone: (() => void) | null = null;
   onWake: (() => void) | null = null;
 
-  /** Where a press on Mochi started: moving past DRAG_THRESHOLD drags him out. */
+  /** Where a press on the ghost started: moving past DRAG_THRESHOLD drags it out. */
   private botPress: { x: number; y: number } | null = null;
 
   /** The next reveal from hidden makes no peek (music starting, as on macOS). */
@@ -241,7 +241,7 @@ export class Island {
     for (const v of this.views.values()) this.viewsEl.append(v.el);
     this.contentEl = h("div", { id: "content" }, this.header.el, this.viewsEl);
 
-    // The drop sequence draws the card, the bar and its own Mochi. It sits under
+    // The drop sequence draws the card, the bar and its own ghost. It sits under
     // the header, which stays visible on top of it exactly as on macOS.
     this.uploadCanvas = new UploadCanvas({
       ask: () => {
@@ -448,14 +448,14 @@ export class Island {
     void Bridge.focusWindow(true);
   }
 
-  /** The desktop shortcut needs a desktop Mochi: none on GNOME's Wayland. */
+  /** The desktop shortcut needs a desktop ghost: none on GNOME's Wayland. */
   canLeaveIsland(): boolean {
     return this.desktop.supported;
   }
 
-  /** The desktop shortcut (macOS DesktopMochiController.flyOutOrHome). */
+  /** The desktop shortcut (DesktopGhostController.flyOutOrHome). */
   flyOutOrHome() {
-    // The greeting and the drop sequence draw a Mochi of their own: he stays
+    // The greeting and the drop sequence draw a ghost of their own: it stays
     // for them, as he does for a drag (canDragOut).
     const busy = State.mode === "expanded" && (State.view === "greeting" || this.uploadActive);
     if (busy && !State.ghostOnDesktop) return;
@@ -508,7 +508,7 @@ export class Island {
   }
 
   /**
-   * Mochi eats the file. Nothing here waits on the file system: the copy into
+   * The ghost eats the file. Nothing here waits on the file system: the copy into
    * the inbox runs in the background and swaps the path in when it lands, so a
    * slow disk can never stall the animation — same as FileDropHandler on macOS.
    */
@@ -560,7 +560,7 @@ export class Island {
 
   /**
    * Sounds and view changes hung off the canvas timeline: a `tick` every 10 %,
-   * the ✓ chime when the bar completes, then `choose` once Mochi has grown back.
+   * the ✓ chime when the bar completes, then `choose` once the ghost has grown back.
    */
   private stepSequence() {
     const since = UploadSeq.sinceDrop();
@@ -677,7 +677,7 @@ export class Island {
       State.lastActivity = performance.now();
       // A click makes a hover-opened island an ordinary open one.
       this.fsm.userInteracted();
-      // A press on Mochi may become a drag out to the desktop.
+      // A press on the ghost may become a drag out to the desktop.
       if (e.button === 0 && this.isBotHit(e.clientX, e.clientY)) {
         this.botPress = { x: e.clientX, y: e.clientY };
       }
@@ -697,7 +697,7 @@ export class Island {
       if (this.isBotHit(e.clientX, e.clientY)) e.preventDefault();
     });
 
-    // Dragging Mochi out of the island puts him on the desktop.
+    // Dragging the ghost out of the island puts it on the desktop.
     window.addEventListener("mousemove", (e) => {
       if (this.desktop.carrying) {
         this.desktop.carry(e.clientX, e.clientY);
@@ -812,14 +812,14 @@ export class Island {
     this.ensureRunning();
   }
 
-  /** The greeting and the drop sequence draw a Mochi of their own: not that one. */
+  /** The greeting and the drop sequence draw a ghost of their own: not that one. */
   private canDragOut(): boolean {
     if (State.mode === "hidden" || !this.desktop.canPickUp()) return false;
     return !(State.mode === "expanded" && (State.view === "greeting" || this.uploadActive));
   }
 
   private isBotHit(x: number, y: number): boolean {
-    // Out on the desktop, the island's Mochi is invisible: nothing to hit.
+    // Out on the desktop, the island's ghost is invisible: nothing to hit.
     if (State.ghostOnDesktop) return false;
     const rect = this.islandRect();
     const cx = rect.x + this.botCx.value;
@@ -912,7 +912,7 @@ export class Island {
         this.greeting.draw(gctx);
       }
     } else {
-      // Kept running even while the drop canvas is up, so the island's own Mochi
+      // Kept running even while the drop canvas is up, so the island's own ghost
       // is already in the right place the moment the canvas fades out.
       this.drawBot(dt);
     }
@@ -957,7 +957,7 @@ export class Island {
     this.botSize.target = p.diameter / 0.6;
 
     const greetingActive = State.mode === "expanded" && State.view === "greeting";
-    // The drop canvas draws its own Mochi; two of them would overlap. Out on the
+    // The drop canvas draws its own ghost; two of them would overlap. Out on the
     // desktop, he isn't here at all.
     const away = State.ghostOnDesktop;
     const visible = p.opacity > 0 && !greetingActive && !this.uploadActive && !away;
@@ -998,7 +998,7 @@ export class Island {
     if (!ctx) return;
 
     const focus = State.focusTask;
-    // While a plan card is open Mochi wears the plan's colour, like its pill.
+    // While a plan card is open the ghost wears the plan's colour, like its pill.
     this.engine.bodyColor = planCardOpen()
       ? hexToRGB(openPlanColor())
       : focus?.isIntegration

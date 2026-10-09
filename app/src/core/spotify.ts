@@ -1,10 +1,10 @@
 // The Spotify pill on the page: what src-tauri/src/spotify.rs reports (Linux,
-// through MPRIS), and the pure rules the views and Mochi follow — ports of
-// SpotifyController.swift, NowPlayingViews.swift and the Mac's dance rules
-// (BotCanvasView, DesktopMochi.swift).
+// through MPRIS), and the pure rules the views and the ghost follow, ported from
+// the Mac app's own Spotify controller, now playing views and dance rules
+// (not Mac-specific, kept generic).
 //
 // Windows has no music source yet: nothing ever reports a track there, so
-// nothing plays and Mochi never dances, through the same code.
+// nothing plays and the ghost never dances, through the same code.
 
 import type { BotStateName, IslandMode, IslandViewName } from "./layout";
 
@@ -99,11 +99,11 @@ export function musicPlaying(s: SpotifyState, activeIntegrations: readonly strin
   return s.playing && s.track != null && activeIntegrations.includes(SPOTIFY_ID);
 }
 
-/** The states Mochi dances in; the rest (an alert, an error, sleep) win. */
+/** The states the ghost dances in; the rest (an alert, an error, sleep) win. */
 const DANCE_STATES: ReadonlySet<BotStateName> = new Set(["idle", "working", "thinking", "searching", "finished"]);
 
 /**
- * The island's Mochi (BotCanvasView, macOS): in the compact island whenever
+ * The island's ghost: in the compact island whenever
  * music plays, expanded only on the overview with the music pill in front.
  */
 export function islandDances(o: {
@@ -118,7 +118,7 @@ export function islandDances(o: {
   return o.mode === "expanded" && o.view === "overview" && o.focusId === SPOTIFY_ID;
 }
 
-/** Mochi on the desktop: the compact island's rules (DesktopMochi.swift). */
+/** The ghost on the desktop: the compact island's rules. */
 export function desktopDances(music: boolean, state: BotStateName): boolean {
   return music && DANCE_STATES.has(state);
 }

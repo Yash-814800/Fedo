@@ -76,7 +76,7 @@ export function runGlobalShortcut(host: ShortcutHost, action: string, resume: ()
         host.alert("question");
         host.takeKeyboard();
       } else {
-        // Nothing is waiting: Mochi says so.
+        // Nothing is waiting: the ghost says so.
         host.emote("annoyed");
         Sound.play("error");
       }
@@ -116,7 +116,7 @@ export function runGlobalShortcut(host: ShortcutHost, action: string, resume: ()
     }
 
     // The Mac's ⌃⌥D. Sending him out lifts Pause, as the other shortcuts do;
-    // where he can't leave the island, Mochi says so.
+    // where it can't leave the island, the ghost says so.
     case "desktopToggle":
       if (!host.canLeaveIsland()) {
         host.emote("annoyed");
