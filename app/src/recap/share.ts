@@ -2,7 +2,7 @@
 // port of RecapShareImageView in WeeklyRecapView.swift. Same colours, sizes
 // and order; the ghost comes from the island's own engine.
 
-import { BotEngine } from "../mochi/engine";
+import { BotEngine } from "../ghost/engine";
 import { formatCount, formatDuration, weekRangeLabel, type WeeklySummary } from "./summary";
 import { t } from "../i18n/i18n";
 import { SCRIPT_FONTS } from "../core/fonts";

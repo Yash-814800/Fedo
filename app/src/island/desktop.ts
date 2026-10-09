@@ -1,5 +1,5 @@
 // The ghost on the desktop, island side: runs its life cycle (the controller
-// in mochi/desktop-logic.ts) against the real app, tells the desktop window
+// in ghost/desktop-logic.ts) against the real app, tells the desktop window
 // what to show, and handles the drag out of the island. The window itself
 // lives in src-tauri/src/desktop.rs and draws it in src/desktop/main.ts.
 
@@ -10,7 +10,7 @@ import { State } from "../core/state";
 import { desktopDances } from "../core/spotify";
 import {
   DESKTOP_EVENTS, DesktopGhostController, alertActive, type DesktopSnapshot,
-} from "../mochi/desktop-logic";
+} from "../ghost/desktop-logic";
 
 /** Label of the desktop ghost's window (desktop.rs LABEL). */
 const WINDOW = "ghost";

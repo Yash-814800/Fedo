@@ -13,9 +13,9 @@ import {
 import { Sound } from "../core/sound";
 import { State } from "../core/state";
 import { SPOTIFY_ID, islandDances } from "../core/spotify";
-import { BotEngine, hexToRGB } from "../mochi/engine";
-import { Greeting } from "../mochi/greeting";
-import { createMiniBot, pruneMiniBots, syncMiniBotStates, tickMiniBots } from "../mochi/minibots";
+import { BotEngine, hexToRGB } from "../ghost/engine";
+import { Greeting } from "../ghost/greeting";
+import { createMiniBot, pruneMiniBots, syncMiniBotStates, tickMiniBots } from "../ghost/minibots";
 import { UploadCanvas } from "../upload/canvas";
 import { USC, UploadSeq } from "../upload/sequence";
 import { closePlanCard, openPlanColor, planCardOpen } from "../views/usage";
@@ -25,7 +25,7 @@ import { IslandStateMachine } from "./fsm";
 import { refreshHookPills } from "./integrations";
 import { DesktopLink } from "./desktop";
 import type { ViewCommand } from "./shortcuts";
-import { DRAG_THRESHOLD } from "../mochi/desktop-logic";
+import { DRAG_THRESHOLD } from "../ghost/desktop-logic";
 
 const BOT_OVERHANG = 40;
 const CLAUDE_DESKTOP_ID = "agent_claude-desktop";

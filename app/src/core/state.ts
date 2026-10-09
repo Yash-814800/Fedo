@@ -1,7 +1,7 @@
 // App state — mirror of AppState.swift (the parts the island needs).
 
 import type { BotEmoteName, BotStateName, IslandMode, IslandViewName } from "./layout";
-import type { EyeShape } from "../mochi/engine";
+import type { EyeShape } from "../ghost/engine";
 import {
   DEFAULT_MAIN_PILL, HOST_OS, availablePills, orderPills, pillDefinition, sanitizeDeclared,
   toggleDeclared, type HostOs, type PillDefinition,

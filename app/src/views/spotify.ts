@@ -14,7 +14,7 @@ import {
   SPOTIFY_GREEN, SPOTIFY_ID, Spotify, currentArtwork, formatTime, isAd, spotifyPosition, volumeLevel, withPlaying,
   type SpotifyTrack,
 } from "../core/spotify";
-import { createMiniBot } from "../mochi/minibots";
+import { createMiniBot } from "../ghost/minibots";
 import { pillDefinition } from "../core/pills";
 import { N_, t } from "../i18n/i18n";
 
