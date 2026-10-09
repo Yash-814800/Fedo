@@ -285,6 +285,12 @@ fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
+/// Tray → Pause: no network traffic (currently just Spotify artwork) while paused.
+#[tauri::command]
+fn set_paused(paused: bool) {
+    spotify::PAUSED.store(paused, Ordering::Relaxed);
+}
+
 // ── Claude Code hooks ─────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -583,6 +589,7 @@ pub fn run() {
             open_claude_desktop,
             open_file_in_vscode,
             quit_app,
+            set_paused,
             hooks_status,
             agent_hooks_status,
             hooks_preview,

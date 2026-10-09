@@ -1,10 +1,9 @@
 // Settings window — the place where anything that writes to disk is confirmed.
-// Stage 2 covers the Claude Code hooks and the general preferences; API keys and
-// integrations land here too in a later stage.
+// This covers the Claude Code and Antigravity hooks and the general preferences.
+// No API keys or third-party integrations in this fork (FEDO.md §0).
 
 import "./settings.css";
 import { Bridge, onEvent, type HookPreview, type HookStatus, type ShortcutsReport } from "../core/bridge";
-import { CUSTOM_SERVER_KEY, providerDef, urlExposure } from "../core/providers";
 import {
   ISLAND_SHORTCUTS, SHORTCUTS, SHORTCUT_TEXT, activeKeys, displayKeys, duplicates, effective,
   recordPress, type Binding,
@@ -20,13 +19,8 @@ import { agentsSection } from "./agents";
 import { colorDot } from "./colors";
 import { renderDiff, statusDot } from "./parts";
 import {
-  LANGUAGES, N_, isRtl, onLanguageChange, resolveLanguage, setLanguage, systemLanguages, t, tn,
+  LANGUAGES, isRtl, onLanguageChange, resolveLanguage, setLanguage, systemLanguages, t,
 } from "../i18n/i18n";
-
-/** Where secrets.rs keeps the keys on this OS. */
-const KEY_STORE = navigator.userAgent.includes("Windows")
-  ? "Windows Credential Manager"
-  : "Secret Service (GNOME Keyring, KWallet)";
 
 let settings: Settings = { ...DEFAULT_SETTINGS };
 let version = "";
@@ -237,10 +231,8 @@ function claudeSection(status: HookStatus): HTMLElement {
  * that has been confirmed. A status line the user had keeps working.
  */
 const PLAN_SETTINGS_TEXT = {
-  get claude() { return t("Shows your Claude plan usage (5-hour and weekly limits) in the island's header. Coucou adds a status line relay in ~/.claude/settings.json. If you already have a status line, it keeps working as before. Pro and Max plans only."); },
+  get claude() { return t("Shows your Claude plan usage (5-hour and weekly limits) in the island's header. Fedo adds a status line relay in ~/.claude/settings.json. If you already have a status line, it keeps working as before. Pro and Max plans only."); },
   get showClaude() { return t("Show in notch"); },
-  get codex() { return t("Shows your Codex plan usage (weekly limit and free resets left) in the island's header. Coucou asks the Codex CLI (codex app-server) when the pill shows; nothing is installed. Codex must be signed in with ChatGPT."); },
-  get showCodex() { return t("Show Codex plan in the notch"); },
 };
 
 function planSection(status: HookStatus): HTMLElement {
@@ -300,103 +292,11 @@ function planSection(status: HookStatus): HTMLElement {
               onclick: () => void reviewChange(body, STATUS_LINE_CHANGE, true, redraw, () => void rebuild()),
             }),
       ),
-      // Codex: nothing to install, Coucou asks the Codex CLI when the pill shows.
-      h("div", { class: "hint", text: PLAN_SETTINGS_TEXT.codex }),
-      h("div", { class: "row" },
-        h("label", { text: PLAN_SETTINGS_TEXT.showCodex }),
-        toggle(settings.showCodexPlanInNotch, (on) => {
-          settings.showCodexPlanInNotch = on;
-          void save();
-        }),
-      ),
     );
   }
 
   draw();
   return section;
-}
-
-// ── Claude API section ────────────────────────────────────────────────────────
-
-const MODELS: [string, string][] = [
-  ["claude-opus-5", "Claude Opus 5"],
-  ["claude-sonnet-5", "Claude Sonnet 5"],
-  ["claude-haiku-4-5", "Claude Haiku 4.5"],
-];
-
-function apiSection(hasKey: boolean): HTMLElement {
-  const dot = statusDot(hasKey);
-  const state = h("span", { class: "hint", text: hasKey ? t("Key saved in the {store}.", { store: KEY_STORE }) : t("No key yet — the chat needs one.") });
-
-  const field = h("input", {
-    type: "password",
-    placeholder: hasKey ? `••••••••••••  ${t("(stored)")}` : "sk-ant-...",
-    style: "flex:1 1 auto;min-width:0",
-    autocomplete: "off",
-    spellcheck: "false",
-  }) as HTMLInputElement;
-
-  const saveBtn = h("button", { class: "primary", text: t("Save key") });
-  const clearBtn = h("button", { class: "danger", text: t("Remove") });
-  const feedback = h("div", {});
-
-  async function refresh() {
-    const present = (await Bridge.secretPresent("anthropic-api-key")) ?? false;
-    dot.style.background = present ? "#22c55e" : "#f4505e";
-    state.textContent = present
-      ? t("Key saved in the {store}.", { store: KEY_STORE })
-      : t("No key yet — the chat needs one.");
-    field.placeholder = present ? `••••••••••••  ${t("(stored)")}` : "sk-ant-...";
-    clearBtn.style.display = present ? "" : "none";
-  }
-
-  saveBtn.addEventListener("click", async () => {
-    const value = field.value.trim();
-    if (!value) return;
-    clear(feedback);
-    try {
-      await Bridge.secretSet("anthropic-api-key", value);
-      field.value = "";
-      feedback.append(h("div", { class: "notice ok", text: t("Saved. It never touches disk.") }));
-      await refresh();
-    } catch (err) {
-      feedback.append(h("div", { class: "notice err", text: t("Could not save: {error}", { error: String(err) }) }));
-    }
-  });
-
-  clearBtn.addEventListener("click", async () => {
-    clear(feedback);
-    try {
-      await Bridge.secretClear("anthropic-api-key");
-      feedback.append(h("div", { class: "notice ok", text: t("Key removed.") }));
-      await refresh();
-    } catch (err) {
-      feedback.append(h("div", { class: "notice err", text: t("Could not remove: {error}", { error: String(err) }) }));
-    }
-  });
-
-  const model = h("select", {}) as HTMLSelectElement;
-  for (const [id, label] of MODELS) model.append(h("option", { value: id, text: label }));
-  if (!MODELS.some(([id]) => id === settings.model)) {
-    model.append(h("option", { value: settings.model, text: settings.model }));
-  }
-  model.value = settings.model;
-  model.addEventListener("change", () => {
-    settings.model = model.value;
-    void save();
-  });
-
-  clearBtn.style.display = hasKey ? "" : "none";
-
-  return h(
-    "section",
-    {},
-    h("h2", {}, dot, h("span", { text: "Claude" })),
-    state,
-    h("div", { class: "row" }, h("label", { text: t("API key") }), field, saveBtn, clearBtn),
-    h("div", { class: "row" }, h("label", { text: t("Model") }), model),
-    feedback,
-  );
 }
 
 // ── Active pills section ──────────────────────────────────────────────────────
@@ -424,7 +324,6 @@ function activePillsSection(connected: Record<string, boolean>): HTMLElement {
     if (isComingSoon(def.id)) return t("Coming soon");
     if (def.connect.kind === "hooks" && !connected[def.id]) return t("Hooks not installed");
     if (def.connect.kind === "key" && !connected[def.id]) return t("Key not configured");
-    if (def.connect.kind === "server" && !settings[def.connect.field]) return t("Not connected");
     return null;
   }
 
@@ -481,301 +380,11 @@ function activePillsSection(connected: Record<string, boolean>): HTMLElement {
   );
 }
 
-// ── Chat providers section ────────────────────────────────────────────────────
-
-const CHAT_STRINGS = {
-  get providersTitle() { return t("Chat providers"); },
-  get providersHint() { return t("Chat with Google AI, OpenAI or OpenRouter instead of Claude: add a key here, then click the model name above the chat box to switch provider and model. Keys stay in the system keychain. These providers get no web search and no tools: they can answer, never act on this computer."); },
-  get stored() { return `••••••••  ${t("(stored)")}`; },
-  get save() { return t("Save"); },
-  get remove() { return t("Remove"); },
-  get localTitle() { return t("Local models"); },
-  get localHint() { return t("Chat with a model you run yourself: Ollama or LM Studio (leave the address empty for the usual one on this computer), or any server that speaks the OpenAI API, such as vLLM or llama.cpp. Once connected, pick it above the chat box."); },
-  get connect() { return t("Connect"); },
-  get connecting() { return t("Connecting…"); },
-  get disconnect() { return t("Disconnect"); },
-  get useInChat() { return t("Use in chat"); },
-  get inUse() { return t("In use"); },
-  get keyOptional() { return t("API key (optional)"); },
-  get localOnly() { return t("Nothing leaves your PC: the server runs on this computer."); },
-  get remote() { return t("This address is another machine: what you ask is sent to it."); },
-  get remoteHttp() { return t("This address is another machine, over plain http: what you ask travels unencrypted."); },
-  get keyOverHttp() { return t("Warning: the key would be sent unencrypted (http://) to another machine. Use https://, or a server on this computer."); },
-  get invalid() { return t("Not a valid http:// or https:// address."); },
-  noModels: (name: string) => t("No models yet. Download one in {name} first.", { name }),
-  models: (n: number) => tn("{count} model", "{count} models", n),
-};
-
-interface CloudDef {
-  id: "google" | "openai" | "openrouter";
-  name: string;
-  placeholder: string;
-  where: string;
-}
-
-const CLOUD: CloudDef[] = [
-  { id: "google", name: "Google AI", placeholder: "AIza…", where: "aistudio.google.com" },
-  { id: "openai", name: "OpenAI", placeholder: "sk-…", where: "platform.openai.com" },
-  { id: "openrouter", name: "OpenRouter", placeholder: "sk-or-…", where: "openrouter.ai/keys" },
-];
-
-function chatProvidersSection(
-  present: Record<string, boolean>,
-  keyChanged: (key: string, on: boolean) => void,
-): HTMLElement {
-  const list = h("div", { style: "display:flex;flex-direction:column;gap:8px" });
-  for (const def of CLOUD) {
-    const p = providerDef(def.id);
-    const key = p.key!;
-    const input = h("input", {
-      type: "password",
-      placeholder: present[key] ? CHAT_STRINGS.stored : def.placeholder,
-      autocomplete: "off",
-      spellcheck: "false",
-      style: "flex:1 1 auto;min-width:0",
-    }) as HTMLInputElement;
-    const dotEl = statusDot(present[key] ?? false);
-    const saveBtn = h("button", { text: CHAT_STRINGS.save });
-    const removeBtn = h("button", { class: "danger", text: CHAT_STRINGS.remove });
-    const refresh = () => {
-      input.placeholder = present[key] ? CHAT_STRINGS.stored : def.placeholder;
-      dotEl.style.background = present[key] ? "#22c55e" : "#f4505e";
-      removeBtn.style.display = present[key] ? "" : "none";
-    };
-    saveBtn.addEventListener("click", async () => {
-      const value = input.value.trim();
-      if (!value) return;
-      try {
-        await Bridge.secretSet(key, value);
-        present[key] = true;
-        input.value = "";
-        keyChanged(key, true);
-      } catch {
-        dotEl.style.background = "#f5a524";
-        return;
-      }
-      refresh();
-    });
-    removeBtn.addEventListener("click", async () => {
-      try {
-        await Bridge.secretClear(key);
-        present[key] = false;
-        keyChanged(key, false);
-      } catch {
-        dotEl.style.background = "#f5a524";
-        return;
-      }
-      refresh();
-    });
-    refresh();
-    list.append(
-      h("div", { class: "row" },
-        h("label", {},
-          h("i", { class: "dot", style: `background:${p.accent};margin-right:8px` }),
-          h("span", { text: def.name }),
-        ),
-        input, saveBtn, removeBtn, dotEl,
-      ),
-      h("div", { class: "hint", style: "margin:-4px 0 0 144px", text: t("Key from {site}", { site: def.where }) }),
-    );
-  }
-  return h(
-    "section",
-    {},
-    h("h2", {}, h("span", { text: CHAT_STRINGS.providersTitle })),
-    h("div", { class: "hint", text: CHAT_STRINGS.providersHint }),
-    list,
-  );
-}
-
-// ── Local models section ──────────────────────────────────────────────────────
-
-type LocalId = "ollama" | "lmstudio" | "custom";
-
-/** Redraws the local models section after a change made elsewhere (the island). */
-let localRedraw: (() => void) | null = null;
-
-const LOCAL: Record<LocalId, { name: string; usual: string }> = {
-  ollama: { name: "Ollama", usual: "http://127.0.0.1:11434" },
-  lmstudio: { name: "LM Studio", usual: "http://127.0.0.1:1234" },
-  // No usual address: any server that speaks the OpenAI API.
-  custom: { name: N_("OpenAI-compatible"), usual: "" },
-};
-
-/** What an address means for the user's data, as a hint line. */
-function exposureNotice(url: string, withKey: boolean): HTMLElement | null {
-  switch (urlExposure(url)) {
-    case "local":
-      return h("div", { class: "hint", text: CHAT_STRINGS.localOnly });
-    case "remote":
-      return h("div", { class: "hint", text: CHAT_STRINGS.remote });
-    case "remote-http":
-      return withKey
-        ? h("div", { class: "notice warn", text: CHAT_STRINGS.keyOverHttp })
-        : h("div", { class: "hint", text: CHAT_STRINGS.remoteHttp });
-    case "invalid":
-      return url.trim() ? h("div", { class: "notice err", text: CHAT_STRINGS.invalid }) : null;
-  }
-}
-
-function localSection(customKey: boolean): HTMLElement {
-  const body = h("div", { style: "display:flex;flex-direction:column;gap:14px" });
-  const section = h(
-    "section",
-    {},
-    h("h2", {}, h("span", { text: CHAT_STRINGS.localTitle })),
-    h("div", { class: "hint", text: CHAT_STRINGS.localHint }),
-    body,
-  );
-  const redraw = () => {
-    clear(body);
-    for (const id of Object.keys(LOCAL) as LocalId[]) body.append(serverBlock(id));
-  };
-
-  function serverBlock(id: LocalId): HTMLElement {
-    const def = LOCAL[id];
-    const p = providerDef(id);
-    const field = p.urlField!;
-    const connected = settings[field] !== "";
-    const status = h("div", {});
-    const exposure = h("div", {});
-    const label = h("label", {},
-      h("i", { class: "dot", style: `background:${p.accent};margin-right:8px` }),
-      h("span", { text: t(def.name) }),
-    );
-    const block = h("div", { style: "display:flex;flex-direction:column;gap:6px" });
-
-    if (connected) {
-      const inUse = settings.chatProvider === id;
-      const use = h("button", { class: inUse ? "" : "primary", text: inUse ? CHAT_STRINGS.inUse : CHAT_STRINGS.useInChat });
-      use.disabled = inUse;
-      use.addEventListener("click", () => {
-        settings.chatProvider = id;
-        void save().then(redraw);
-      });
-      const disconnect = h("button", { class: "danger", text: CHAT_STRINGS.disconnect });
-      disconnect.addEventListener("click", async () => {
-        settings[field] = "";
-        if (settings.chatProvider === id) settings.chatProvider = "anthropic";
-        if (id === "custom") {
-          await Bridge.secretClear(CUSTOM_SERVER_KEY).catch(() => {});
-          customKey = false;
-        }
-        await save();
-        redraw();
-      });
-      block.append(
-        h("div", { class: "row" }, label, h("span", { class: "path", text: settings[field] }), statusDot(true), use, disconnect),
-        status,
-      );
-      exposure.append(exposureNotice(settings[field], id === "custom" && customKey) ?? "");
-      block.append(exposure);
-      return block;
-    }
-
-    const input = h("input", {
-      type: "text",
-      placeholder: def.usual || "https://llm.example.com",
-      style: "flex:1 1 auto;min-width:0",
-      spellcheck: "false",
-      autocomplete: "off",
-    }) as HTMLInputElement;
-    // A custom server may want a key; it goes to the keychain, never to settings.json.
-    const key = h("input", {
-      type: "password",
-      placeholder: customKey ? CHAT_STRINGS.stored : CHAT_STRINGS.keyOptional,
-      style: "flex:1 1 auto;min-width:0",
-      autocomplete: "off",
-      spellcheck: "false",
-    }) as HTMLInputElement;
-    const connect = h("button", { class: "primary", text: CHAT_STRINGS.connect });
-
-    const showExposure = () => {
-      clear(exposure);
-      const withKey = id === "custom" && (customKey || key.value.trim() !== "");
-      const notice = exposureNotice(input.value || def.usual, withKey);
-      if (notice) exposure.append(notice);
-    };
-    input.addEventListener("input", showExposure);
-    key.addEventListener("input", showExposure);
-
-    connect.addEventListener("click", async () => {
-      connect.disabled = true;
-      clear(status);
-      status.append(h("div", { class: "hint", text: CHAT_STRINGS.connecting }));
-      try {
-        if (id === "custom" && key.value.trim()) {
-          // Stored with this address: the key is only ever sent there.
-          await Bridge.localSetKey(input.value || def.usual, key.value.trim());
-          key.value = "";
-          customKey = true;
-        }
-        const server = await Bridge.localConnect(id, input.value);
-        if (!server.models.length) {
-          clear(status);
-          status.append(h("div", { class: "notice err", text: CHAT_STRINGS.noModels(t(def.name)) }));
-        } else {
-          settings[field] = server.url;
-          if (!server.models.includes(settings.chatModels[id] ?? "")) {
-            settings.chatModels = { ...settings.chatModels, [id]: server.models[0] };
-          }
-          await save();
-          redraw();
-          return;
-        }
-      } catch (err) {
-        clear(status);
-        status.append(h("div", { class: "notice err", text: String(err).replace(/^Error:\s*/, "") }));
-      }
-      connect.disabled = false;
-    });
-
-    block.append(h("div", { class: "row" }, label, input, connect));
-    if (id === "custom") block.append(h("div", { class: "row" }, h("label", { text: "" }), key));
-    block.append(status, exposure);
-    showExposure();
-    return block;
-  }
-
-  redraw();
-  localRedraw = redraw;
-  return section;
-}
-
-// ── Integrations section ──────────────────────────────────────────────────────
-
-interface IntegrationDef {
-  id: string;
-  name: string;
-  color: string;
-  /** Credential Manager keys, in the order they are shown. */
-  fields: { key: string; label: string; placeholder: string; secret: boolean }[];
-  /** What the key needs, shown under its field. */
-  hint?: string;
-}
-
-const INTEGRATIONS: IntegrationDef[] = [
-  { id: "integration_stripe", name: "Stripe", color: "#0570DE",
-    fields: [{ key: "stripe-api-key", label: N_("Secret key"), placeholder: "sk_live_…", secret: true }] },
-  { id: "integration_github", name: "GitHub", color: "#F4505E",
-    fields: [{ key: "github-token", label: N_("Token"), placeholder: "ghp_…", secret: true }],
-    hint: N_("Classic token with the repo scope, or fine-grained with read access to Pull requests, Commit statuses and Actions.") },
-  { id: "integration_vercel", name: "Vercel", color: "#7C5CFF",
-    fields: [{ key: "vercel-token", label: N_("Token"), placeholder: "…", secret: true }] },
-  { id: "integration_n8n", name: "n8n", color: "#F29B38",
-    fields: [
-      { key: "n8n-url", label: N_("Instance URL"), placeholder: "https://n8n.example.com", secret: false },
-      { key: "n8n-api-key", label: N_("API key"), placeholder: "…", secret: true },
-    ] },
-  { id: "integration_resend", name: "Resend", color: "#22C55E",
-    fields: [{ key: "resend-api-key", label: N_("API key"), placeholder: "re_…", secret: true }] },
-  { id: "integration_notion", name: "Notion", color: "#8C8C8C",
-    fields: [{ key: "notion-api-key", label: N_("Integration token"), placeholder: "ntn_…", secret: true }] },
-  { id: "integration_calcom", name: "Cal.com", color: "#C9956A",
-    fields: [{ key: "calcom-api-key", label: N_("API key"), placeholder: "cal_…", secret: true }] },
-  // Nothing to enter: Spotify is read over D-Bus (Linux only, see core/pills.ts).
-  { id: "integration_spotify", name: "Spotify", color: "#1DB954", fields: [] },
-];
+// ── Services section ──────────────────────────────────────────────────────────
+//
+// Only Spotify is left (FEDO.md Phase 0 removed Stripe, n8n, Vercel, GitHub,
+// Notion and Cal.com, all key-based) — read over D-Bus (core/pills.ts), with
+// nothing to enter here.
 
 const MAX_ACTIVE = MAX_DECLARED;
 
@@ -787,18 +396,18 @@ function declaredChanged() {
   void save();
 }
 
-function integrationsSection(present: Record<string, boolean>): HTMLElement {
+function servicesSection(): HTMLElement {
   const note = h("div", { class: "hint" });
   const list = h("div", { style: "display:flex;flex-direction:column;gap:14px" });
 
   function updateNote() {
     const used = settings.activeIntegrations.length;
-    note.textContent = t("Pick up to {max} pills to show next to Mochi — {used}/{max} in use. Keys are stored in the {store}, never on disk.", { max: MAX_ACTIVE, used, store: KEY_STORE });
+    note.textContent = t("Pick up to {max} pills to show next to the ghost — {used}/{max} in use.", { max: MAX_ACTIVE, used });
   }
   declaredViews.push(updateNote);
 
-  const offered = new Set(availablePills().map((p) => p.id));
-  for (const def of INTEGRATIONS.filter((d) => offered.has(d.id))) {
+  const def = { id: "integration_spotify", name: "Spotify", color: "#1DB954" };
+  if (availablePills().some((p) => p.id === def.id)) {
     const active = settings.activeIntegrations.includes(def.id);
     const sw = h("button", { class: active ? "switch on" : "switch" });
     sw.addEventListener("click", () => {
@@ -813,46 +422,10 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
       declaredChanged();
     });
 
-    const rows = h("div", { style: "display:flex;flex-direction:column;gap:6px;flex:1 1 auto;min-width:0" });
-    for (const field of def.fields) {
-      const input = h("input", {
-        type: field.secret ? "password" : "text",
-        placeholder: present[field.key] ? CHAT_STRINGS.stored : field.placeholder,
-        autocomplete: "off",
-        spellcheck: "false",
-        style: "flex:1 1 auto;min-width:0",
-      }) as HTMLInputElement;
-      const saveBtn = h("button", { text: t("Save") });
-      const dotEl = statusDot(present[field.key] ?? false);
-      saveBtn.addEventListener("click", async () => {
-        const value = input.value.trim();
-        try {
-          await Bridge.secretSet(field.key, value);
-          present[field.key] = value.length > 0;
-          input.value = "";
-          input.placeholder = value ? CHAT_STRINGS.stored : field.placeholder;
-          dotEl.style.background = value ? "#22c55e" : "#f4505e";
-        } catch {
-          dotEl.style.background = "#f5a524";
-        }
-      });
-      rows.append(
-        h("div", { class: "row" },
-          h("label", { style: "min-width:104px", text: t(field.label) }),
-          input, saveBtn, dotEl,
-        ),
-      );
-    }
-
-    if (def.hint) rows.append(h("div", { class: "hint", text: t(def.hint) }));
-    if (def.id === "integration_spotify") {
-      // As on the Mac's row: said only when there is no Spotify to launch.
-      const hint = h("div", { class: "hint", style: "padding-top:5px" });
-      rows.append(hint);
-      void Bridge.spotifyInstalled().then((ok) => {
-        hint.textContent = ok === false ? t("Not installed") : "";
-      });
-    }
+    const hint = h("div", { style: "padding-top:5px" });
+    void Bridge.spotifyInstalled().then((ok) => {
+      hint.textContent = ok === false ? t("Not installed") : "";
+    });
 
     list.append(
       h("div", { style: "display:flex;gap:12px;align-items:flex-start" },
@@ -861,13 +434,13 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
           colorDot(def, "", () => settings.pillColors, pickColor),
           h("span", { style: "font-size:12.5px", text: def.name }),
         ),
-        rows,
+        hint,
       ),
     );
   }
 
   updateNote();
-  return h("section", {}, h("h2", {}, h("span", { text: t("Integrations") })), note, list);
+  return h("section", {}, h("h2", {}, h("span", { text: t("Services") })), note, list);
 }
 
 // ── General section ───────────────────────────────────────────────────────────
@@ -1304,12 +877,9 @@ async function main() {
 
   void onEvent<ShortcutsReport>("shortcuts-status", (fresh) => shortcutsListener?.report(fresh));
   void onEvent<Settings>("settings-changed", (s) => {
-    const before = `${settings.chatProvider}|${settings.ollamaUrl}|${settings.lmstudioUrl}|${settings.customUrl}`;
     settings = { ...settings, ...s };
     shortcutsListener?.settingsChanged();
     for (const redraw of declaredViews) redraw();
-    const after = `${settings.chatProvider}|${settings.ollamaUrl}|${settings.lmstudioUrl}|${settings.customUrl}`;
-    if (before !== after) localRedraw?.();
     applyLanguage();
   });
 }
@@ -1320,53 +890,22 @@ async function render() {
     installed: false, planRelayInstalled: false, settingsPath: "", hookPath: "", hookReady: false,
   };
   const agents = await Bridge.agentHooksList();
-
-  const hasKey = (await Bridge.secretPresent("anthropic-api-key")) ?? false;
   const shortcutReport = await Bridge.shortcutsStatus();
-
-  const keys = [
-    "stripe-api-key", "github-token", "vercel-token",
-    "n8n-url", "n8n-api-key", "resend-api-key", "notion-api-key", "calcom-api-key",
-  ];
-  const present: Record<string, boolean> = {};
-  for (const k of keys) present[k] = (await Bridge.secretPresent(k)) ?? false;
 
   // A main pill this build can run, and no pill declared twice.
   settings = { ...settings, ...sanitizeDeclared(settings) };
   const connected: Record<string, boolean> = { ...((await Bridge.agentHooksStatus()) ?? {}) };
-  for (const def of availablePills()) {
-    if (def.connect.kind === "key") {
-      connected[def.id] = present[def.connect.key] ?? (await Bridge.secretPresent(def.connect.key)) ?? false;
-    }
-  }
-  /** A chat provider's key was saved or removed: its pill's row says so at once. */
-  const keyChanged = (key: string, on: boolean) => {
-    for (const def of availablePills()) {
-      if (def.connect.kind === "key" && def.connect.key === key) connected[def.id] = on;
-    }
-    for (const redraw of declaredViews) redraw();
-  };
-  const chatKeys: Record<string, boolean> = {};
-  for (const def of CLOUD) {
-    const key = providerDef(def.id).key!;
-    chatKeys[key] = (await Bridge.secretPresent(key)) ?? false;
-  }
-  const customKey = (await Bridge.secretPresent(CUSTOM_SERVER_KEY)) ?? false;
 
   declaredViews.length = 0;
-  localRedraw = null;
   shortcutsListener = null;
   clear(root);
   root.append(
-    h("h1", {}, h("span", { text: "Coucou" }), h("span", { class: "version", text: version })),
+    h("h1", {}, h("span", { text: "Fedo" }), h("span", { class: "version", text: version })),
     claudeSection(status),
     agentsSection(agents),
     planSection(status),
-    apiSection(hasKey),
-    chatProvidersSection(chatKeys, keyChanged),
-    localSection(customKey),
     activePillsSection(connected),
-    integrationsSection(present),
+    servicesSection(),
     generalSection(),
     shortcutsSection(shortcutReport),
     h("div", {

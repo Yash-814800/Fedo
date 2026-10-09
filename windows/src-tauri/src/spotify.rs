@@ -19,11 +19,14 @@
 #![cfg_attr(not(target_os = "linux"), allow(dead_code))]
 
 use serde::Serialize;
+use std::sync::atomic::AtomicBool;
 use tauri::AppHandle;
 
 pub const PILL_ID: &str = "integration_spotify";
 /// Where "Get Spotify" leads when it isn't installed.
 pub const DOWNLOAD_URL: &str = "https://www.spotify.com/download/linux/";
+/// Tray → Pause: no network traffic, including an artwork fetch, while set.
+pub static PAUSED: AtomicBool = AtomicBool::new(false);
 /// Island events: the player's state, and a track's cover as a data URL.
 const STATE_EVENT: &str = "spotify";
 const ARTWORK_EVENT: &str = "spotify-artwork";
@@ -392,7 +395,22 @@ pub fn sniff_image(bytes: &[u8]) -> Option<&'static str> {
 
 fn data_url(bytes: &[u8]) -> Option<String> {
     let mime = sniff_image(bytes)?;
-    Some(format!("data:{mime};base64,{}", crate::claude::base64_for(bytes)))
+    Some(format!("data:{mime};base64,{}", base64(bytes)))
+}
+
+/// Small standalone base64 encoder — not worth a dependency for one call site.
+fn base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        out.push(TABLE[(n >> 18) as usize & 63] as char);
+        out.push(TABLE[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 { TABLE[(n >> 6) as usize & 63] as char } else { '=' });
+        out.push(if chunk.len() > 2 { TABLE[n as usize & 63] as char } else { '=' });
+    }
+    out
 }
 
 #[derive(Serialize, Clone)]
@@ -1035,7 +1053,7 @@ mod linux {
         match artwork_source(&url) {
             Some(ArtSource::Https(remote)) => {
                 // Pause means nothing reaches the network.
-                if crate::integrations::PAUSED.load(std::sync::atomic::Ordering::Relaxed) {
+                if PAUSED.load(std::sync::atomic::Ordering::Relaxed) {
                     ART.lock().unwrap().loading = None;
                     return;
                 }

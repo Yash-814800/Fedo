@@ -65,6 +65,12 @@ impl Relay {
     }
 }
 
+/// The relay command for the running OS, for `args` — Claude Code's own hooks
+/// (hooks.rs) use this rather than building a `Relay` themselves.
+pub fn relay_command(shell: Shell, args: &str) -> String {
+    Relay::current().command(shell, args)
+}
+
 /// `s` as one single-quoted POSIX shell word: `'` becomes `'\''`, nothing else
 /// is special inside single quotes.
 fn sh_quote(s: &str) -> String {

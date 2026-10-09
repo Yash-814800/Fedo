@@ -7,8 +7,7 @@
       "rpm"
     ],
     "resources": {
-      "../target/release/coucou-hook.exe": null,
-      "../target/release/coucou-hook": "coucou-hook"
+      "../target/release/fedo-hook": "fedo-hook"
     },
     "linux": {
       "appimage": {
@@ -30,7 +29,7 @@
     "windows": [
       {
         "label": "island",
-        "title": "Coucou",
+        "title": "Fedo",
         "url": "index.html",
         "width": 240,
         "height": 6,

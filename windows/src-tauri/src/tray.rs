@@ -1,7 +1,7 @@
-// Notification-area icon: Open, Weekly recap, Settings, Quit.
+// Notification-area icon: Open, Weekly recap, Settings, Pause, Quit.
 //
-// Wardrobe and Pause are gone with the features they controlled (seasonal
-// outfits, the integration pollers) — see FEDO.md Phase 0.
+// Wardrobe is gone with the feature it controlled (seasonal outfits) — see
+// FEDO.md Phase 0.
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -12,10 +12,11 @@ use crate::island::WINDOW_LABEL;
 
 /// The menu's items, id and English label, in order. The labels are shown in
 /// the interface language (i18n.rs) and follow it when it changes.
-const ITEMS: [(&str, &str); 4] = [
+const ITEMS: [(&str, &str); 5] = [
     ("open", n_("Open Fedo")),
     ("recap", n_("Weekly recap")),
     ("settings", n_("Settings…")),
+    ("pause", n_("Pause")),
     ("quit", n_("Quit")),
 ];
 
@@ -27,10 +28,11 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
     for (id, label) in ITEMS {
         items.push((label, MenuItem::with_id(app, id, t(label), true, None::<&str>)?));
     }
-    let [open, recap, settings, quit] = [0, 1, 2, 3].map(|i| &items[i].1);
+    let [open, recap, settings, pause, quit] = [0, 1, 2, 3, 4].map(|i| &items[i].1);
     let sep1 = PredefinedMenuItem::separator(app)?;
+    let sep2 = PredefinedMenuItem::separator(app)?;
 
-    let menu = Menu::with_items(app, &[open, recap, &sep1, settings, quit])?;
+    let menu = Menu::with_items(app, &[open, recap, &sep1, settings, pause, &sep2, quit])?;
     app.manage(Items(items));
 
     let mut builder = TrayIconBuilder::with_id("fedo")
