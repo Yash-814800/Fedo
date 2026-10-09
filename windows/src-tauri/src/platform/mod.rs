@@ -5,11 +5,6 @@
 
 use std::path::PathBuf;
 
-#[cfg(windows)]
-mod windows;
-#[cfg(windows)]
-pub use self::windows::*;
-
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
@@ -37,11 +32,15 @@ pub fn home_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// How the desktop Mochi's window can be placed and clicked on this system.
+/// How the desktop ghost's window can be placed and clicked on this system.
+///
+/// `Poll` is unused on Linux today (it was the Windows placement mode, a
+/// cursor poll driving click-through and drag anywhere on screen) but the
+/// variant and its match arms stay: nothing on this platform constructs it,
+/// and removing it is deferred until a Rust build can confirm no match on it
+/// becomes non-exhaustive.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DesktopMode {
-    /// Windows: placed anywhere, and a cursor poll drives click-through, the
-    /// eyes and the drag, exactly like the island.
     Poll,
     /// Linux on X11: an ordinary window the window manager lets us place; the
     /// input region is the click-through and the page drives the drag.
@@ -51,7 +50,7 @@ pub enum DesktopMode {
     /// with margins.
     Layer,
     /// Wayland without layer-shell (GNOME): no way to put a window where the
-    /// user dropped it, so Mochi stays in the island.
+    /// user dropped it, so the ghost stays in the island.
     Off,
 }
 
@@ -77,14 +76,13 @@ impl DesktopMode {
     }
 }
 
-/// Which part of the desktop Mochi's window takes the mouse.
+/// Which part of the desktop ghost's window takes the mouse.
 #[derive(Clone, Copy, PartialEq, Debug)]
-#[cfg_attr(windows, allow(dead_code))]
 pub enum MouseShape {
     /// Nothing: every click goes to what is underneath (during a flight).
     Empty,
-    /// The whole window (while he is being dragged across the screen).
+    /// The whole window (while it is being dragged across the screen).
     Whole,
-    /// A disc, in window-logical pixels: Mochi's body.
+    /// A disc, in window-logical pixels: the ghost's body.
     Disc { cx: f64, cy: f64, r: f64 },
 }

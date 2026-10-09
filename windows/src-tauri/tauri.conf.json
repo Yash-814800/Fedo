@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Coucou",
-  "version": "0.3.0",
-  "identifier": "fr.louisraille.coucou",
+  "productName": "Fedo",
+  "version": "0.0.1",
+  "identifier": "org.fedo.Fedo",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -18,7 +18,7 @@
     "windows": [
       {
         "label": "island",
-        "title": "Coucou",
+        "title": "Fedo",
         "url": "index.html",
         "width": 240,
         "height": 6,
@@ -41,24 +41,16 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi"],
+    "targets": ["appimage", "deb", "rpm"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.ico"
+      "icons/128x128@2x.png"
     ],
-    "resources": { "../target/release/coucou-hook.exe": "coucou-hook.exe" },
-    "copyright": "© Louis Raille",
+    "resources": { "../target/release/fedo-hook": "fedo-hook" },
+    "copyright": "© Louis Raille, Fedo additions © 2026",
     "category": "DeveloperTool",
-    "shortDescription": "Mochi lives at the top of your screen",
-    "longDescription": "Coucou puts Mochi at the top of your screen: it shows your Claude Code sessions and a few integrations, and lets you approve, answer, chat and drop files without leaving what you are doing.",
-    "windows": {
-      "nsis": {
-        "installMode": "currentUser",
-        "languages": ["English", "French"],
-        "installerHooks": "nsis/hooks.nsh"
-      }
-    }
+    "shortDescription": "A ghost lives at the top of your screen",
+    "longDescription": "Fedo puts a ghost at the top of your GNOME top bar: it shows your Claude Code and Antigravity sessions, and lets you approve, answer, chat and drop files without leaving what you are doing."
   }
 }
