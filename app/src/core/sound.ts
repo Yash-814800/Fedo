@@ -45,6 +45,7 @@ class SoundEngine {
       master.connect(ctx.destination);
       this.master = master;
       await this.loadAll(ctx);
+      this.scheduleIdle(3000);
     })();
     return this.loading;
   }
@@ -92,6 +93,7 @@ class SoundEngine {
       this.idleTimer = null;
     }
     void this.ctx?.resume();
+    if (this.ctx) this.scheduleIdle(3000);
   }
 
   /**
@@ -144,6 +146,18 @@ class SoundEngine {
       gain.disconnect();
     };
     src.start();
+    // A running context keeps an audio thread rendering silence. The island's
+    // frame loop is not always asleep (the ghost floats), so quiet down on our
+    // own a moment after the last sound.
+    this.scheduleIdle(Math.max(1500, buf.duration * 1000 + 500));
+  }
+
+  private scheduleIdle(ms: number) {
+    if (this.idleTimer != null) window.clearTimeout(this.idleTimer);
+    this.idleTimer = window.setTimeout(() => {
+      this.idleTimer = null;
+      void this.ctx?.suspend();
+    }, ms);
   }
 
   /** Fades every playing copy of `name` to silence over `seconds`, then stops it. */

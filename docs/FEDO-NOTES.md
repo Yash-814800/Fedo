@@ -3,6 +3,83 @@
 A running log of decisions, things verified on this machine, and known
 limitations, per `FEDO.md` rule 7. Newest phase first.
 
+## Verification pass after Phase 5 (before Phase 6)
+
+Done to make sure Phases 0–5 really work, with the shipped artefact rather
+than a dev build.
+
+### Fixed in this pass
+
+- **The JS suite is green: 295/295** (was 247 + 39 failing + whole files
+  failing to load). Tests of removed features were deleted (wardrobe,
+  providers, GitHub); tests that only lagged the renames were repaired
+  (`src/mochi`→`src/ghost`, `coucou_*`→`fedo_*`, `greet` state, the pill
+  catalog); `chat`, `pills`, `i18n` and `plan` tests were rewritten for what
+  Fedo actually does (router → card, English-only mechanism, Claude-only
+  plan gauge).
+- **Idle CPU of an open island: 12 % → 0 %** (packaged build, island open and
+  at rest). Causes found with a CDP profile and `top -H`:
+  1. the drop zone's `dash-march` / `dash-breathe` CSS animations ran forever
+     under `opacity: 0` (inherited from coucou) — views that aren't on screen
+     now never animate;
+  2. the ghost's float and hem kept the frame loop alive for ever — it is
+     drawn at ~24 fps while only those move, and **stops entirely once the
+     ghost has faded to its idle rest** (a hover, state change or poke wakes
+     it);
+  3. the AudioContext kept an audio thread running — it now suspends itself
+     1.5 s after the last sound.
+- **Dead code out**: the GitHub pulse card and its helpers
+  (`views/github.ts`, `core/github.ts`, the `github_refresh` bridge call, 2.8 KB
+  of CSS), the wardrobe shortcut and CSS. The overview's keyboard row
+  selection stays, in `views/rows.ts`.
+- The Claude Code pill is named **Claude Code**, not "VS Code" (ID unchanged).
+- Bundle target is **rpm** only (Fedora; `dpkg` isn't here, AppImage needs a
+  download).
+
+### Verified end to end on this machine
+
+- **The extension in a real GNOME Shell 50.5** (a headless nested shell:
+  `gnome-shell --headless --virtual-monitor`, private bus and config):
+  `fedo@yash` goes ACTIVE and owns `org.fedo.Shell`;
+  `FocusWindow([pid…])` activated a real Wayland window (gnome-calculator) and
+  returned `true`, `false` for a PID with none.
+- **The daemon in that shell**: owns `org.fedo.Fedo`; the island window is an
+  X11 DOCK window with `_NET_WM_STATE_ABOVE`, `STICKY`, `SKIP_TASKBAR` and
+  desktop `-1` (all workspaces) — set by the extension.
+- **The packaged binary** (`npx tauri build`, frontend embedded; runs with no
+  dev server): `Show` → Visibility `open`, `Hide` → `hidden`; real
+  `fedo-hook` events (SessionStart → UserPromptSubmit → PreToolUse →
+  PermissionRequest) took State `idle → working → needs-you` with the island
+  open, and the relay returned no decision when nobody clicked (so Claude Code
+  would ask in the terminal).
+- Release binary 8.4 MB, relay 0.5 MB; open island at rest 0 % CPU
+  (RSS 502 MB, PSS 228 MB — the memory budget below is still not met).
+
+### Gotchas worth knowing
+
+- **`cargo build` / `cargo build --release` alone do not embed the frontend**:
+  the binary loads `http://localhost:1420` and shows nothing without a dev
+  server. Ship with `npx tauri build` (`--no-bundle` for the binary, `--bundles
+  rpm` for the package). A dev-server run costs ~8 % CPU of its own.
+- The Python/EDS and `claude -p` pieces need `python3` + `gi` and the `claude`
+  CLI on `PATH` of the daemon (a systemd user service must carry
+  `~/.local/bin`; Phase 10).
+
+### Still open (honest list)
+
+- **Memory budget not met** (FEDO.md §3): idle 66 MB RSS (26 MB PSS) with no
+  island; open island ~500 MB RSS (228 MB PSS) vs ≤ 200 MB. The fix is
+  architectural (a lean daemon that spawns the island as a separate process);
+  decide before Phase 10.
+- Not driven by clicking: approving from the island, the command card's Enter,
+  GNOME Calendar showing a created event, notification sound autoplay. The
+  logic and every external call were exercised; the click paths were not
+  (no input injection on this machine).
+- Your `~/.claude/settings.json` still has coucou's hooks until you install
+  Fedo's from Settings → Agents.
+- Packaging beyond the rpm bundle (autostart, systemd user service, installing
+  the extension from the package) is Phase 10.
+
 ## Phase 5 — timers, reminders, calendar, deadlines
 
 ### What was built

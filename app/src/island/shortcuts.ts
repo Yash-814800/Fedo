@@ -144,7 +144,7 @@ export function runIslandKey(host: ShortcutHost, action: IslandKeyAction) {
       focusPill(host, pillByNumber(ids, action.number), false);
       break;
     case "list":
-      // Only a card with a list counts its items: the GitHub lists, as on the Mac.
+      // Only a card with a list counts its items.
       if (State.view !== "overview" || State.cardItemCount <= 0) return;
       State.cardSelection = navigate(State.cardSelection, action.delta, State.cardItemCount);
       State.notify();

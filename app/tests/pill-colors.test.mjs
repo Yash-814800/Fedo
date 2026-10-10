@@ -82,9 +82,10 @@ test("with no preference every pill is painted as the catalog says", () => {
 
 test("a pill is created in the colour the user gave it", () => {
   State.settings.pillColors = { integration_claude: TEAL };
+  State.settings.activeIntegrations = ["agent_antigravity"];
   State.loadIntegrationTasks();
   assert.equal(colorOf("integration_claude"), TEAL);
-  assert.equal(colorOf("integration_github"), pillDefinition("integration_github").color);
+  assert.equal(colorOf("agent_antigravity"), pillDefinition("agent_antigravity").color);
 });
 
 test("a colour picked later reaches the pills already on the island, and back", () => {

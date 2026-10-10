@@ -16,7 +16,7 @@ import { DEFAULT_SETTINGS, State } from "../src/core/state.ts";
 
 const MAC_IDS = [
   "toggleIsland", "openChat", "goToAlert", "jumpToTerminal", "attachFrontWindow",
-  "nextPill", "prevPill", "muteToggle", "desktopToggle", "wardrobeToggle",
+  "nextPill", "prevPill", "muteToggle", "desktopToggle",
 ];
 
 // ── Defaults (testDefaultsExhaustive, testAllDefaultsHaveModifier, testNoDefaultDuplicates) ──
@@ -80,7 +80,6 @@ test("only the island toggle is off by default; the one not ported yet is reserv
   }
   assert.deepEqual(activeKeys({}).map(([id]) => id), [
     "openChat", "goToAlert", "jumpToTerminal", "nextPill", "prevPill", "muteToggle", "desktopToggle",
-    "wardrobeToggle",
   ]);
   // The Mac's ⌃⌥D, on the same letter.
   assert.equal(SHORTCUTS.find((d) => d.id === "desktopToggle").defaultKeys, "Ctrl+Alt+D");
@@ -281,7 +280,6 @@ const host = {
   emote: (e) => did.push(`emote:${e}`),
   setPinned: (on) => did.push(`pin:${on}`),
   takeKeyboard: () => did.push("keyboard"),
-  wardrobeAnywhere: () => did.push("wardrobe"),
   canLeaveIsland: () => desktopSupported,
   flyOutOrHome: () => did.push("desktop"),
   viewCommand: (c) => did.push(`view:${c}`),
@@ -304,17 +302,12 @@ beforeEach(() => {
   State.pendingApproval = null;
   State.stateOverride = null;
   State.chatHistory = [];
-  State.settings = { ...DEFAULT_SETTINGS };
-  State.mochiOnDesktop = false;
+  State.settings = { ...DEFAULT_SETTINGS, activeIntegrations: ["agent_antigravity", "integration_spotify"] };
+  State.ghostOnDesktop = false;
   State.cardSelection = null;
   State.cardItemCount = 0;
   desktopSupported = true;
   State.loadIntegrationTasks();
-});
-
-test("the wardrobe shortcut's own event opens the wardrobe", () => {
-  emit("open-wardrobe", null);
-  assert.deepEqual(did, ["resume", "wardrobe"]);
 });
 
 test("a global shortcut arrives as an event and opens the chat", () => {
@@ -450,7 +443,7 @@ test("the desktop shortcut sends Mochi out, lifting Pause, and brings him home",
   assert.deepEqual(did, ["resume", "desktop"]);
   // Out there already: home, and Pause stays as it is.
   did = [];
-  State.mochiOnDesktop = true;
+  State.ghostOnDesktop = true;
   runGlobalShortcut(host, "desktopToggle", resume);
   assert.deepEqual(did, ["desktop"]);
   assert.deepEqual(calls, []);
@@ -466,11 +459,11 @@ test("the desktop shortcut arrives like the others, and runs from the command li
   emit("shortcut", "desktopToggle");
   assert.deepEqual(did, ["resume", "desktop"]);
   const rust = readFileSync(new URL("../src-tauri/src/shortcuts.rs", import.meta.url), "utf8");
-  assert.match(rust, /from_args\(&args\(&\["coucou", "--shortcut", "desktopToggle"\]\)\), Some\("desktopToggle"\)/);
+  assert.match(rust, /from_args\(&args\(&\["fedo", "--shortcut", "desktopToggle"\]\)\), Some\("desktopToggle"\)/);
 });
 
 test("actions that aren't the island's do nothing here", () => {
-  for (const id of ["wardrobeToggle", "attachFrontWindow", "nonsense"]) {
+  for (const id of ["attachFrontWindow", "nonsense"]) {
     runGlobalShortcut(host, id, resume);
   }
   assert.deepEqual(did, []);

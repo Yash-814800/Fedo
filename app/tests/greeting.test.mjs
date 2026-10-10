@@ -1,10 +1,10 @@
-// The launch greeting (src/mochi/greeting.ts): Mochi must never be cut off by
+// The launch greeting (src/ghost/greeting.ts): Mochi must never be cut off by
 // the island while it grows, while he bounces and waves, or while it shrinks
 // back to the compact island.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { GREETING_END, GREETING_W, greetingPose, mochiBounds } from "../src/mochi/greeting.ts";
+import { GREETING_END, GREETING_W, greetingPose, ghostBounds } from "../src/ghost/greeting.ts";
 import { Tracked } from "../src/core/anim.ts";
 import { COMPACT_W, NOTCH_H, NOTCH_W, VIEW_LAYOUTS } from "../src/core/layout.ts";
 
@@ -13,7 +13,7 @@ const SLACK = 0.5; // anti-aliasing
 
 /** Mochi's box against the island's, which is centred in the 640 px greeting canvas. */
 function assertInside(t, tc, w, h) {
-  const b = mochiBounds(greetingPose(t, tc));
+  const b = ghostBounds(greetingPose(t, tc));
   if (!b) return;
   const left = GREETING_W / 2 - w / 2;
   const right = GREETING_W / 2 + w / 2;

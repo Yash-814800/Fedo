@@ -81,6 +81,9 @@ export class Island {
 
   private running = false;
   private lastFrame = 0;
+  private lastBotDraw = 0;
+  /** This frame only moved the ghost's float and hem (see BotEngine.ambientOnly). */
+  private quietFrame = false;
   private dirty = true;
   private canvasPx = 0;
 
@@ -991,7 +994,16 @@ export class Island {
     } else {
       // Kept running even while the drop canvas is up, so the island's own ghost
       // is already in the right place the moment the canvas fades out.
-      this.drawBot(dt);
+      // The float and the hem are all that moves most of the time: draw those
+      // at ~24 fps instead of every display frame.
+      this.quietFrame =
+        this.engine.ambientOnly &&
+        !(this.width.animating || this.height.animating || this.radius.animating) &&
+        this.botCx.settled && this.botCy.settled && this.botSize.settled;
+      if (!this.quietFrame || nowMs - this.lastBotDraw >= 41) {
+        this.drawBot(Math.min(0.05, (nowMs - this.lastBotDraw) / 1000));
+        this.lastBotDraw = nowMs;
+      }
     }
 
     const uploadActive = this.uploadActive;
@@ -1020,7 +1032,12 @@ export class Island {
         greetingActive || this.engine.busy || UploadSeq.isActive || viewAnimating;
 
     if (busy) {
-      requestAnimationFrame(this.frame);
+      // Only the float and the hem moving: wake ~24 times a second, not 60.
+      if (this.quietFrame && State.mode !== "hidden" && !greetingActive && !UploadSeq.isActive && !viewAnimating) {
+        window.setTimeout(() => requestAnimationFrame(this.frame), 34);
+      } else {
+        requestAnimationFrame(this.frame);
+      }
     } else {
       this.running = false;
       Sound.idle();

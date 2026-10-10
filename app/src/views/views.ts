@@ -12,7 +12,7 @@ import { buildPrompt } from "./chat";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
 import { buildCommand } from "./command";
 import { buildSchedule, buildTimePill } from "./schedule";
-import { highlightRow, listRows, openRow } from "./github";
+import { highlightRow, listRows, openRow } from "./rows";
 import { pillDefinition, sessionSubtitle } from "../core/pills";
 import {
   PlanCard, buildPlanPill, claudePillVisible, planCardOpen,
@@ -341,7 +341,7 @@ function buildOverview(actions: ViewActions): ViewHost {
 
       jump.style.display = detailOpen || mode === "plan" || mode === "diff" ? "none" : "";
 
-      // Ctrl+↓ Ctrl+↑ walk the open GitHub list (cardItemCount / cardSelection).
+      // Ctrl+↓ Ctrl+↑ walk the open card's list, if it has one (cardItemCount / cardSelection).
       const rows = mode === "card" ? listRows(leftBody) : [];
       State.cardItemCount = rows.length;
       if (State.cardSelection != null && State.cardSelection >= rows.length) State.cardSelection = null;
@@ -384,7 +384,7 @@ export function hasSessionTicker(task: AgentTask): boolean {
 }
 
 function buildPill(task: AgentTask, actions: ViewActions): HTMLElement {
-  const label = task.id === "integration_claude" ? "VS Code" : task.name;
+  const label = task.id === "integration_claude" ? "Claude Code" : task.name;
   const canvas = createMiniBot(task, 24);
   const pill = h(
     "div",

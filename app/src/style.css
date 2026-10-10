@@ -1988,181 +1988,7 @@ input[type="range"]::-webkit-slider-thumb {
 
 /* ── GitHub pulse (GitHubPulseCardView / GitHubDetailView) ─────────────── */
 
-.gh-spark {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  font: 400 11px var(--font);
-  color: var(--dim-2);
-  white-space: nowrap;
-  cursor: default;
-  min-width: 0;
-}
-
-.gh-mini {
-  display: inline-flex;
-  gap: 2px;
-}
-
-.gh-mini i,
-.gh-cell {
-  width: 7px;
-  height: 7px;
-  border-radius: 1.5px;
-  flex: 0 0 auto;
-}
-
-.int-stats.gh-rows {
-  gap: 4px;
-  padding-top: 6px;
-}
-
-.gh-stat {
-  border: 0;
-  padding: 0;
-  background: transparent;
-  width: 100%;
-  text-align: left;
-  cursor: default;
-}
-
-.gh-detail-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.gh-back {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  font: 600 12px var(--font);
-  color: var(--ink);
-  white-space: nowrap;
-  cursor: default;
-  flex: 0 0 auto;
-}
-
-.gh-head-right {
-  margin-left: auto;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  font: 400 11px var(--font);
-  color: var(--dim-2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-  cursor: default;
-}
-
-.gh-list {
-  display: flex;
-  flex-direction: column;
-  max-height: 60px; /* three 20 px rows; the rest scrolls */
-  overflow-y: auto;
-  margin-top: 4px;
-  scrollbar-width: none;
-}
-
-.gh-list::-webkit-scrollbar {
-  display: none;
-}
-
-.gh-list.fade {
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 80%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0%, #000 80%, transparent 100%);
-}
-
-.gh-row {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  height: 20px;
-  flex: 0 0 20px;
-  padding: 0 4px 0 0;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  text-align: left;
-  cursor: default;
-  min-width: 0;
-}
-
-.gh-row:hover {
-  background: rgba(255, 255, 255, 0.05);
-}
-
 /* Ctrl+↓ / Ctrl+↑: the highlighted row (GitHubPRRowView's `selected`, white 12 %). */
-.gh-row.selected {
-  background: rgba(255, 255, 255, 0.12);
-}
-
-.gh-gap {
-  width: 5px;
-  flex: 0 0 5px;
-}
-
-.gh-ref {
-  font: 400 10.5px var(--font);
-  color: #9398a1;
-  white-space: nowrap;
-  flex: 0 0 auto;
-}
-
-.gh-title {
-  font: 400 11px var(--font);
-  color: #c5c8cd;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-}
-
-.gh-draft {
-  font: 400 9.5px var(--font);
-  color: var(--dim-3);
-  flex: 0 0 auto;
-}
-
-.gh-word {
-  margin-left: auto;
-  padding-left: 4px;
-  font: 400 10px var(--font);
-  white-space: nowrap;
-  flex: 0 0 auto;
-}
-
-.gh-empty {
-  font: 400 10.5px var(--font);
-  color: var(--dim-3);
-  padding-top: 8px;
-}
-
-.gh-grid {
-  display: flex;
-  gap: 1.5px;
-  padding-top: 5px;
-}
-
-.gh-week {
-  display: flex;
-  flex-direction: column;
-  gap: 1.5px;
-}
-
-.gh-cell.empty {
-  background: transparent;
-}
-
 /* ── Weekly recap ───────────────────────────────────────────────────────── */
 /* WeeklyRecapCardView: text from x = 116, indigo wash, chips of 17 px values. */
 
@@ -2267,68 +2093,6 @@ input[type="range"]::-webkit-slider-thumb {
 .recap-link {
   color: #818cf8;
   padding: 0;
-}
-
-/* ── Wardrobe (removed, FEDO.md Phase 0) ─────────────── */
-
-.wardrobe-stack {
-  padding: 12px 16px 12px 104px;
-  gap: 10px;
-}
-
-.wardrobe-head {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  min-width: 0;
-}
-
-.wardrobe-title {
-  font: 600 12px var(--font);
-  color: var(--ink);
-  flex: 0 0 auto;
-}
-
-.wardrobe-note {
-  margin-left: auto;
-  font: 400 11px var(--font);
-  color: var(--dim-2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.wardrobe-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-
-.wardrobe-item {
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  border-radius: 7px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.06);
-  display: grid;
-  place-items: center;
-  cursor: default;
-  transition: background 0.12s ease-out, border-color 0.12s ease-out;
-}
-
-.wardrobe-item:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.wardrobe-item.on {
-  border-color: rgba(255, 255, 255, 0.4);
-}
-
-.wardrobe-item canvas {
-  width: 28px;
-  height: 28px;
-  pointer-events: none;
 }
 
 /* ── Spotify: the pill's controls and the now-playing card ──────────────────
@@ -2615,10 +2379,6 @@ html[data-dir="rtl"] #views :is(.stack, .int-card, .plan-card, .drop-body, .up-c
   direction: rtl;
 }
 
-html[data-dir="rtl"] #views :is(.code, .gh-grid, .diff-card, .md-pre) {
-  direction: ltr;
-}
-
 html[data-dir="rtl"] #views :is(.np-title, .np-sub) {
   unicode-bidi: plaintext;
   text-align: start;
@@ -2712,3 +2472,11 @@ html[data-dir="rtl"] #views :is(.bubble, .reply .md-p, .reply .md-h, .reply .md-
 .sched-btn:hover { background: rgba(255,255,255,0.16); color: #fff; }
 .sched-empty { font-size: 12px; color: var(--dim-2); padding-top: 18px; }
 .header-actions .time-pill { --plan: #22d3ee; font-variant-numeric: tabular-nums; cursor: pointer; }
+
+/* A view that is not on screen must not animate: an infinite CSS animation
+   under opacity 0 still repaints every frame, which is most of an open
+   island's CPU (the drop zone's marching dashes, the typing dots, shimmer). */
+.view:not(.on) *,
+.view:not(.on) {
+  animation: none !important;
+}

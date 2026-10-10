@@ -34,8 +34,7 @@ work on the island's looks.
 ```
 app/
   src/                 island front end (TypeScript, no framework)
-    mochi/             the ghost engine (Phase 0 placeholder: a plain
-                        circle with two eyes) and its desktop-window logic
+    ghost/             the ghost engine, greeting, debug menu and desktop logic
     desktop/           the ghost's own little window, when it lives on the desktop
     island/            state machine, hooks, agent handling
     views/             every island view
@@ -45,10 +44,6 @@ app/
   scripts/             icon generator
 ```
 
-(`src/mochi/` keeps its directory name from the coucou fork it was forked
-from; a rename to something ghost-specific is tracked as follow-up, not
-blocking Phase 0.)
-
 ## What's different from upstream coucou
 
 - **No macOS, no Windows.** `NotchBuddy/` (the Mac app) and every
@@ -56,9 +51,8 @@ blocking Phase 0.)
   named-pipe hook transport) are gone.
 - **No API keys anywhere.** The Anthropic/Google AI/OpenAI chat providers,
   Ollama/LM Studio local-model chat, and the OS keychain/Secret Service
-  key storage are all removed. The chat view exists but isn't wired to
-  anything yet — Phase 3 routes it through the `claude` CLI instead of a
-  direct API call.
+  key storage are all removed. The chat runs every turn through the `claude`
+  CLI you are logged into (`claude -p`).
 - **No third-party service integrations.** Stripe, n8n, GitHub, Vercel,
   Resend, Notion and Cal.com are gone. Spotify (read over MPRIS/D-Bus,
   Linux-only even in the coucou fork) is the one integration kept.
@@ -69,8 +63,8 @@ blocking Phase 0.)
   tag (see [`../docs/AGENTS.md`](../docs/AGENTS.md)) — only the
   one-click installer UI was narrowed.
 - **No wardrobe.** Seasonal outfits and the right-click wardrobe view are
-  removed along with the real character art; Phase 2 designs a ghost from
-  scratch rather than reusing Mochi's.
+  removed along with the upstream character art; the ghost is drawn from
+  scratch in code (`src/ghost/engine.ts`).
 - **English only**, for now — `src/i18n/i18n.ts`'s lookup mechanism is
   kept so languages (Hindi first) can be added back later, but
   `strings.json`/`extra.json`'s translation tables are empty.
@@ -82,12 +76,12 @@ blocking Phase 0.)
 ## GNOME on Wayland
 
 GNOME has no layer-shell and ignores where a Wayland window asks to go.
-Coucou's existing fallback — running through XWayland as a dock window,
-top centre, on every workspace — is what this fork uses too;
+The XWayland dock-window fallback — top centre, on every workspace — is
+what Fedo uses; the GNOME Shell extension in `../gnome-extension/` places it
+under the top bar;
 `FEDO_X11=0` keeps the native Wayland window instead,
 `FEDO_DOCK=0` makes it a utility window, `FEDO_LAYER_SHELL=0` forces a
-regular window anywhere. A GNOME Shell extension that places the real
-island window from the top bar is Phase 1, not built yet.
+regular window anywhere.
 
 ## Log
 

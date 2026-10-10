@@ -28,7 +28,6 @@ export const SHORTCUT_TEXT = {
   prevPill: N_("Previous pill"),
   muteToggle: N_("Mute or unmute the ghost"),
   desktopToggle: N_("Send the ghost to the desktop"),
-  wardrobeToggle: N_("Open the wardrobe"),
   island: {
     nextPrev: N_("Next or previous pill"),
     byNumber: N_("Go to pill 1 to 9"),
@@ -55,8 +54,7 @@ export type ShortcutId =
   | "nextPill"
   | "prevPill"
   | "muteToggle"
-  | "desktopToggle"
-  | "wardrobeToggle";
+  | "desktopToggle";
 
 export interface ShortcutDef {
   id: ShortcutId;
@@ -80,7 +78,6 @@ export const SHORTCUTS: readonly ShortcutDef[] = [
   def("prevPill", "Ctrl+Alt+Left", true, true),
   def("muteToggle", "Ctrl+Alt+S", true, true),
   def("desktopToggle", "Ctrl+Alt+D", true, true),
-  def("wardrobeToggle", "Ctrl+Alt+G", true, true),
 ];
 
 export interface Binding {

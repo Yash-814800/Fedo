@@ -66,6 +66,11 @@ limitations recorded as each phase lands.
 cd app && npm install && npm run tauri dev
 ```
 
+Ship / test the real artefact with `npx tauri build --no-bundle` (binary) or
+`npx tauri build --bundles rpm`. A bare `cargo build` binary loads the dev
+server URL and shows nothing without `npm run dev`. `npm test` (295 tests) and
+`cargo test --workspace` must stay green.
+
 Needs Rust, Node 20+, and the Fedora packages listed in
 [`docs/FEDO-NOTES.md`](docs/FEDO-NOTES.md) (verified against `dnf info`,
 not guessed). `xcodegen`/Xcode/Swift do not apply here — there is no

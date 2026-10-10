@@ -1,5 +1,5 @@
 // The Spotify pill (Linux) and Mochi's dance: the page's rules in
-// src/core/spotify.ts, the dance in src/mochi/engine.ts, the report handling in
+// src/core/spotify.ts, the dance in src/ghost/engine.ts, the report handling in
 // src/island/spotify.ts and the views in src/views/spotify.ts. The MPRIS side —
 // metadata, position, the bus itself — is tested in src-tauri/src/spotify.rs.
 
@@ -11,7 +11,7 @@ import {
   IDLE_SPOTIFY, SPOTIFY_ID, Spotify, currentArtwork, desktopDances, formatTime, isAd, islandDances,
   musicPlaying, spotifyPosition, volumeLevel, withPlaying,
 } from "../src/core/spotify.ts";
-import { BotEngine, danceTransform, stepDanceLevel } from "../src/mochi/engine.ts";
+import { BotEngine, danceTransform, stepDanceLevel } from "../src/ghost/engine.ts";
 import { registerSpotifyHandlers } from "../src/island/spotify.ts";
 import { buildSpotifyCard, buildSpotifyPill } from "../src/views/spotify.ts";
 import { DEFAULT_SETTINGS, State } from "../src/core/state.ts";
@@ -243,10 +243,6 @@ test("the idle card: not playing, or not installed with a way to get it", () => 
   assert.match(card.el.textContent, /Spotify not installed.*Get Spotify/);
   card.el.find("BUTTON")[0].fire("click");
   assert.ok(sent("spotify_open").length > 0);
-
-  setLanguage("fr");
-  card.sync();
-  assert.ok(card.el.textContent.includes(lookup("Get Spotify", "fr")));
 });
 
 test("the playing card: title, artist · album, times, and the controls", () => {

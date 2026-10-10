@@ -607,6 +607,37 @@ export class BotEngine {
     return false;
   }
 
+  /**
+   * The ghost has faded to its idle-faint rest: nearly invisible and nothing
+   * to say, so it stops floating too and the island's frame loop can sleep
+   * (no repaints, no audio thread). Anything — a hover, a state change, a
+   * poke — touches it awake.
+   */
+  get resting(): boolean {
+    return (
+      this.idleFade && !this.isMini && this.state === "idle" && !this.isDancing &&
+      this.tweens.size === 0 && this.particles.length === 0 &&
+      now() - this.lastTouch > IDLE_FADE_AFTER + 1 && this.presence <= IDLE_PRESENCE + 0.01
+    );
+  }
+
+  /**
+   * True when nothing is moving except the float and the hem: no tween, no
+   * particle, no state animation. The island may then draw the ghost at a
+   * lower rate — it is the one thing that keeps an open island animating.
+   */
+  get ambientOnly(): boolean {
+    return (
+      this.tweens.size === 0 &&
+      this.particles.length === 0 &&
+      !this.cfg.bounces && !this.cfg.scans && !this.cfg.wisp && !this.cfg.aura && !this.cfg.sweat &&
+      !this.isMini && !this.isDancing && this.dancingLevel < 0.001 &&
+      this.state !== "dizzy" && this.eyeOverride !== "spiral" &&
+      Math.abs(this.tgYaw - this.yaw) < 0.01 &&
+      Math.abs(this.tgPitch - this.pitch) < 0.01
+    );
+  }
+
   /** True while anything is still moving — lets the island stop its RAF loop. */
   get busy(): boolean {
     return (
@@ -616,7 +647,7 @@ export class BotEngine {
       this.isMini ||
       this.isDancing || this.dancingLevel > 0.001 ||
       // The float and the hem never stop on their own: a visible ghost is always moving.
-      !this.vanished || this.presence > 0.002 ||
+      (!this.vanished && !this.resting) || this.presence > 0.002 && !this.resting ||
       this.cfg.wisp || this.cfg.aura ||
       Math.abs(this.tgYaw - this.yaw) > 0.002 ||
       Math.abs(this.tgPitch - this.pitch) > 0.002 ||
@@ -1015,9 +1046,15 @@ export class BotEngine {
     }
     // Translucent edges: solid in the middle, thinning towards the rim, with a
     // soft halo behind so the ghost reads on any background.
+    // A soft halo behind, from two wide low-alpha strokes (shadowBlur costs a
+    // blur pass per frame, which software-rendered WebKit pays in CPU).
     x.save();
-    x.shadowColor = rgba(mix3(BASE_TOP, this.col, this.tint * 0.6), 0.45);
-    x.shadowBlur = R * 0.35;
+    x.lineJoin = "round";
+    x.strokeStyle = rgba(mix3(BASE_TOP, this.col, this.tint * 0.6), 0.1);
+    x.lineWidth = R * 0.34;
+    x.stroke(body);
+    x.lineWidth = R * 0.18;
+    x.stroke(body);
     const g = x.createLinearGradient(rx * 0.5, -ry, -rx * 0.5, ry);
     g.addColorStop(0, rgba(BASE_TOP, 0.97));
     g.addColorStop(1, rgba(BASE_BOTTOM, 0.9));
