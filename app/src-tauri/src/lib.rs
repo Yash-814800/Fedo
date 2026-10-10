@@ -15,6 +15,7 @@ mod hooks;
 mod i18n;
 mod identity;
 mod island;
+mod llm;
 mod log;
 mod net;
 mod pipe;
@@ -100,6 +101,7 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
         (screen_changed, autostart_changed, shortcuts_changed)
     };
     let settings = shared.settings.lock().unwrap().clone();
+    llm::configure(&settings);
     if let Err(err) = settings::save(&settings) {
         log::line(format!("could not save settings: {err}"));
     }
@@ -620,6 +622,7 @@ pub fn stats() -> i32 {
 pub fn run() {
     platform::prepare_environment();
     let loaded = settings::load();
+    llm::configure(&loaded);
     i18n::set_picked(&loaded.language);
     let gate = Arc::new(PollGate::new());
 
@@ -687,6 +690,7 @@ pub fn run() {
             assist::assist_run,
             assist::assist_copy,
             assist::assist_do,
+            llm::local_ai_status,
             assist::assist_create_event,
             notify::notify_done,
             scheduler::schedule_list,

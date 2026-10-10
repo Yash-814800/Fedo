@@ -13,6 +13,7 @@
 - **Click it → a floating "island" drops down** from the top-center of the screen (coucou's island look and motion). Click again / Esc / click outside → it tucks away.
 - The island is **invisible when idle** and **peeks out by itself** when something needs me (approval, question, task done, timer, reminder, incoming call/notification).
 - **All intelligence goes through Claude Code** (the `claude` CLI I'm already logged into). **No API keys anywhere.** No Anthropic/OpenAI/Gemini/Ollama providers.
+  - *Amended after Phase 6:* a Settings → AI switch lets all of Fedo's own requests go to a **local Ollama model** instead of Claude (still no API keys, no cloud providers). See `docs/FEDO-NOTES.md` → "Local model backend".
 - **Resource use must be minimal.** See §3 budgets — they are requirements, not wishes.
 - **Nothing on my system is changed without my confirmation.** Fedo writes the command, shows it, I press Enter (or say "do it").
 

@@ -3,7 +3,7 @@
 // No API keys or third-party integrations in this fork (FEDO.md §0).
 
 import "./settings.css";
-import { Bridge, onEvent, type HookPreview, type HookStatus, type ShortcutsReport } from "../core/bridge";
+import { Bridge, onEvent, type HookPreview, type HookStatus, type LocalAiStatus, type ShortcutsReport } from "../core/bridge";
 import {
   ISLAND_SHORTCUTS, SHORTCUTS, SHORTCUT_TEXT, activeKeys, displayKeys, duplicates, effective,
   recordPress, type Binding,
@@ -444,6 +444,92 @@ function servicesSection(): HTMLElement {
 }
 
 // ── General section ───────────────────────────────────────────────────────────
+
+/** The models worth offering for a 4 GB card, best first. */
+const RECOMMENDED_MODELS = [
+  { id: "qwen3:4b-instruct-2507-q4_K_M", note: "best answers · ~3.5 GB, ~35 tokens/s on this GPU" },
+  { id: "llama3.2:3b", note: "faster, a bit less exact · ~2.6 GB" },
+  { id: "qwen2.5:3b-instruct", note: "smallest · ~2 GB" },
+];
+
+/** Settings → AI: who answers Fedo's own requests. */
+function aiSection(): HTMLElement {
+  const body = h("div", {});
+  const section = h("section", {}, h("h2", {}, h("span", { text: "AI" })), body);
+  let status: LocalAiStatus | null = null;
+
+  const radio = (value: "claude" | "local", label: string, hint: string) => {
+    const input = h("input", { type: "radio", name: "ai-backend" }) as HTMLInputElement;
+    input.checked = settings.aiBackend === value;
+    input.addEventListener("change", () => {
+      settings.aiBackend = value;
+      void save();
+      draw();
+    });
+    return h("label", { class: "row" }, input, h("span", { text: label }), h("span", { class: "hint", text: hint }));
+  };
+
+  async function refresh() {
+    status = await Bridge.localAiStatus(settings.ollamaUrl);
+    draw();
+  }
+
+  function draw() {
+    clear(body);
+    body.append(
+      h("div", { class: "hint", text: "Who answers the chat, the command assistant, file plans, the prompt writer and email drafts. Claude Code's own sessions are always Claude." }),
+      radio("claude", "Claude", "the `claude` CLI you are logged into: best answers, uses your plan"),
+      radio("local", "Local model", "Ollama on this machine: private, free, a little less exact, no web or tools"),
+    );
+    if (settings.aiBackend !== "local" && !status) return;
+
+    const url = h("input", { type: "text", value: settings.ollamaUrl, style: "width:220px" }) as HTMLInputElement;
+    url.addEventListener("change", () => {
+      settings.ollamaUrl = url.value.trim() || "http://127.0.0.1:11434";
+      void save();
+      void refresh();
+    });
+    const installed = status?.models ?? [];
+    const options = [...new Set([settings.localModel, ...RECOMMENDED_MODELS.map((m) => m.id), ...installed])];
+    const pick = h("select", {}) as HTMLSelectElement;
+    for (const id of options) {
+      const here = installed.includes(id);
+      pick.append(h("option", { value: id, text: `${id}${here ? "" : "  (not installed)"}`, selected: id === settings.localModel }));
+    }
+    pick.addEventListener("change", () => {
+      settings.localModel = pick.value;
+      void save();
+      draw();
+    });
+    body.append(
+      h("div", { class: "row" }, h("label", { text: "Ollama" }), url,
+        h("span", { class: "hint", text: !status ? "checking…" : status.running ? "running" : status.error ?? "not running" })),
+      h("div", { class: "row" }, h("label", { text: "Model" }), pick,
+        h("button", { class: "secondary", text: "Refresh", onclick: () => void refresh() })),
+    );
+    const note = RECOMMENDED_MODELS.find((m) => m.id === settings.localModel)?.note;
+    if (note) body.append(h("div", { class: "hint", text: note }));
+    if (status?.running && !installed.includes(settings.localModel)) {
+      const cmd = `ollama pull ${settings.localModel}`;
+      body.append(
+        h("div", { class: "hint", text: "This model isn't installed yet. Fedo doesn't download things for you; run this in a terminal:" }),
+        h("div", { class: "row" },
+          h("code", { text: cmd }),
+          h("button", { class: "secondary", text: "Copy", onclick: () => void Bridge.assistCopy(cmd) })),
+      );
+    }
+    if (!status?.running && status) {
+      body.append(h("div", { class: "hint", text: "Start Ollama with `systemctl start ollama` or `ollama serve`." }));
+    }
+    body.append(
+      h("div", { class: "hint", text: "Needs a 4 GB card free: close other GPU-heavy apps, or a bigger model will partly run on the CPU. Voice will use a speech-to-text model first (Phase 8), then these same requests." }),
+    );
+  }
+
+  draw();
+  void refresh();
+  return section;
+}
 
 function generalSection(): HTMLElement {
   const volume = h("input", {
@@ -1001,6 +1087,7 @@ async function render() {
     planSection(status),
     activePillsSection(connected),
     servicesSection(),
+    aiSection(),
     generalSection(),
     shortcutsSection(shortcutReport),
     h("div", {

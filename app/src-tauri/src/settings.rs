@@ -26,6 +26,12 @@ pub struct Settings {
     /// Hovering the island opens it all the way, and it folds again shortly
     /// after the pointer leaves (the Mac's "Open on hover"). Off by default.
     pub open_on_hover: bool,
+    /// Who answers Fedo's own requests (router, chat, file plans, prompt
+    /// writer, email drafts): "claude" (the CLI) or "local" (Ollama).
+    pub ai_backend: String,
+    /// The Ollama model used when `ai_backend` is "local".
+    pub local_model: String,
+    pub ollama_url: String,
     /// Phone notifications and incoming calls may peek the island.
     pub phone_notify: bool,
     /// Only apps whose name contains one of these (case-insensitive) peek it.
@@ -100,6 +106,9 @@ impl Default for Settings {
             notify_on_done: true,
             notify_after_seconds: 20.0,
             open_on_hover: false,
+            ai_backend: "claude".into(),
+            local_model: "qwen3:4b-instruct-2507-q4_K_M".into(),
+            ollama_url: "http://127.0.0.1:11434".into(),
             phone_notify: true,
             phone_notify_apps: vec!["Phone".into(), "Dialer".into(), "Messages".into(), "WhatsApp".into()],
             phone_country_code: String::new(),
@@ -380,6 +389,9 @@ mod tests {
   "notifyOnDone": false,
   "notifyAfterSeconds": 5.0,
   "openOnHover": true,
+  "aiBackend": "local",
+  "localModel": "llama3.2:3b",
+  "ollamaUrl": "http://localhost:11500",
   "phoneNotify": false,
   "phoneNotifyApps": ["Signal"],
   "phoneCountryCode": "44",
@@ -764,6 +776,9 @@ mod tests {
                 "notifyOnDone",
                 "notifyAfterSeconds",
                 "openOnHover",
+                "aiBackend",
+                "localModel",
+                "ollamaUrl",
                 "phoneNotify",
                 "phoneNotifyApps",
                 "phoneCountryCode",

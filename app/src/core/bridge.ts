@@ -164,6 +164,8 @@ export const Bridge = {
   /** Runs a confirmed command: a new terminal window, or hidden when `inline` and Fedo calls it safe. */
   assistRun: (command: string, inline: boolean) => call<AssistRun>("assist_run", { command, inline }),
   assistCopy: (text: string) => call<boolean>("assist_copy", { text }),
+  /** Is Ollama answering at `url`, and which models does it hold? */
+  localAiStatus: (url: string) => call<LocalAiStatus>("local_ai_status", { url }),
   /** Writes a confirmed event or deadline to GNOME Calendar and schedules its reminders. */
   assistCreateEvent: (kind: string, title: string, start: number, end: number, allDay: boolean) =>
     call<string>("assist_create_event", { kind, title, start, end, allDay }),
@@ -490,6 +492,12 @@ export interface AssistAction {
   note: string | null;
   warning: string | null;
   params: Record<string, unknown>;
+}
+
+export interface LocalAiStatus {
+  running: boolean;
+  models: string[];
+  error: string | null;
 }
 
 export interface PhoneEvent {

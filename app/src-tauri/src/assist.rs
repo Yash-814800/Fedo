@@ -640,7 +640,7 @@ fn expand_home(p: &str, home: &Path) -> std::path::PathBuf {
 /// which the card calls out. The command is built here, from the plan, with
 /// every path quoted — never taken from the model.
 pub fn plan_card(plan: &FilePlan, home: &Path) -> Result<Card, String> {
-    if let Some(p) = &plan.problem {
+    if let Some(p) = plan.problem.as_ref().filter(|p| !p.trim().is_empty()) {
         return Err(p.clone());
     }
     if plan.ops.is_empty() || plan.ops.len() > 12 {
@@ -739,7 +739,29 @@ intent:\n\
 - whatsapp: send a WhatsApp message. args {\"name\": the contact, \"message\": the text}.\n\
 - email: compose an email. args {\"to\": address or contact name, \"subject\": optional, \"body\": optional, \"instruction\": what the email should say, in the user's words, \"attach\": true if they mean the file they dropped}.\n\
 - chat: anything else — questions, explanations, writing, coding help, conversation. Use chat when unsure.\n\
+Examples (message → intent and args):\n\
+\"Dinner with Mom Saturday 8pm\" → event {title:\"Dinner with Mom\", start:<that Saturday>T20:00}\n\
+\"submit the report by Friday\" → deadline {title:\"Submit the report\", date:<that Friday>}\n\
+\"remind me to drink water at 3pm\" → reminder {title:\"Drink water\", at:<today or tomorrow>T15:00}\n\
+\"tell Riya on whatsapp I'm outside\" → whatsapp {name:\"Riya\", message:\"I'm outside\"}\n\
+\"text Dad I'll be late\" → sms {name:\"Dad\", message:\"I'll be late\"}\n\
+\"how do I undo a git commit?\" → chat\n\
+\"I need to file my taxes before March 3rd, remind me\" → deadline {title:\"File my taxes\", date:<March 3>}\n\
+\"get me vlc\" → install {name:\"vlc\"}\n\
+\"write a bash script that renames files\" → chat\n\
+\"list the biggest files in Downloads\" → command {command:\"du -ah ~/Downloads | sort -rh | head -20\"}\n\
+`command` is only for acting on THIS computer (files, services, settings, system info); writing code or explaining things is chat. An event has a time or a place to be at; a deadline is something to finish BEFORE a date; a reminder is only a nudge at a time. Messaging someone (SMS, WhatsApp, text, tell) is never chat.\n\
 explanation: one short sentence. risk: how harmful the action could be if it ran (safe = read-only or trivially reversible; careful = changes the system or installs/removes software; dangerous = can destroy data or break the session).";
+
+/// The router's instructions with today's date and a table of the days ahead.
+fn router_system() -> String {
+    let now = crate::calendar::now();
+    format!(
+        "{ROUTER_SYSTEM}\nCurrent local date and time: {}.\nCalendar (use this to turn weekdays into dates; a bare weekday or \"next <weekday>\" is the first one listed): {}.",
+        crate::calendar::now_for_prompt(now),
+        crate::calendar::days_ahead_for_prompt(now, 15)
+    )
+}
 
 const FILES_SYSTEM: &str = "You plan file operations for the user on Linux. The user's home directory is given. \
 Use ONLY the read-only tools you have (Glob, ls, find) to find the REAL files and folders the request refers to; names in the request are fuzzy, so match them against what exists. \
@@ -763,6 +785,18 @@ fn claude_json(
     limit: Duration,
 ) -> Result<Value, String> {
     let mut last = String::from("no answer");
+    // The local model answers instead when that is the chosen backend. It has no
+    // tools, so callers that wanted them put what they need in the prompt.
+    if let Some(l) = crate::llm::local() {
+        for _ in 0..2 {
+            match crate::llm::json(&l, system, prompt, schema, limit) {
+                Ok(v) => return Ok(v),
+                Err(e) if e.contains("isn't") || e.contains("answering") => return Err(e),
+                Err(e) => last = e,
+            }
+        }
+        return Err(last);
+    }
     for _ in 0..2 {
         let mut cmd = Command::new("claude");
         cmd.args(["-p", prompt, "--model", model, "--output-format", "json", "--json-schema", schema])
@@ -822,6 +856,9 @@ fn run_capture_cmd(mut cmd: Command, limit: Duration) -> Option<String> {
 
 /// Plain text out of `claude -p` (the prompt writer).
 fn claude_text(system: &str, prompt: &str, model: &str, cwd: &Path, limit: Duration) -> Result<String, String> {
+    if let Some(l) = crate::llm::local() {
+        return crate::llm::text(&l, system, prompt, limit);
+    }
     let mut cmd = Command::new("claude");
     cmd.args(["-p", prompt, "--model", model, "--output-format", "text", "--tools", ""])
         .args(["--append-system-prompt", system])
@@ -906,10 +943,7 @@ fn route_blocking(
     if fast_only {
         return Ok(Reply::Chat);
     }
-    let system = format!(
-        "{ROUTER_SYSTEM}\nCurrent local date and time: {}.",
-        crate::calendar::now_for_prompt(crate::calendar::now())
-    );
+    let system = router_system();
     let routed = claude_json(&system, query, ROUTER_SCHEMA, "haiku", None, &home, Duration::from_secs(45))?;
     dispatch(app, query, &routed, &home, dropped)
 }
@@ -950,8 +984,14 @@ fn dispatch(
         }
         "reminder" => {
             let title = arg("title").unwrap_or_else(|| query.to_string());
-            match arg("at").and_then(|a| crate::calendar::parse_local(&a)) {
-                Some((at, _)) if at > crate::calendar::now() => {
+            let now = crate::calendar::now();
+            // "6pm" said at 9pm means tomorrow at 6pm: a time that passed
+            // within the last half-day rolls over to the next day.
+            let rolled = arg("at").and_then(|a| crate::calendar::parse_local(&a)).map(|(t, d)| {
+                if t <= now && now - t < 12 * 3600 { (t + 86_400, d) } else { (t, d) }
+            });
+            match rolled {
+                Some((at, _)) if at > now => {
                     crate::scheduler::add_reminder(app, at, &title);
                     Ok(Reply::Done { text: format!("I'll remind you {}: {title}", crate::calendar::describe(at, false)) })
                 }
@@ -1271,8 +1311,81 @@ const FILES_SCHEMA: &str = r#"{
   "required": ["ops", "explanation"]
 }"#;
 
+/// Words of a request worth looking for in file names.
+pub fn search_terms(task: &str) -> Vec<String> {
+    const STOP: &[&str] = &[
+        "the", "and", "into", "from", "that", "this", "with", "copy", "move", "rename", "folder", "file", "files",
+        "named", "called", "create", "make", "put", "inside", "then", "for", "please", "can", "you", "go", "to",
+        "it", "my", "new", "one", "all", "of", "in", "on", "a", "an",
+    ];
+    let mut out: Vec<String> = Vec::new();
+    for raw in task.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.' || c == '-')) {
+        let w = raw.trim_matches('.').to_lowercase();
+        if w.len() >= 2 && !STOP.contains(&w.as_str()) && !out.contains(&w) {
+            out.push(w);
+        }
+    }
+    out
+}
+
+/// Real paths under `home` whose names contain a term of the request, best
+/// first: what a model with no tools is given instead of `find`.
+pub fn fs_candidates(home: &Path, task: &str, limit: usize) -> Vec<String> {
+    let terms = search_terms(task);
+    if terms.is_empty() {
+        return vec![];
+    }
+    let skip = ["node_modules", "target", ".git", ".cache", ".cargo", ".rustup", ".npm", "snap", ".var", ".local", ".mozilla", ".config"];
+    let mut scored: Vec<(usize, String)> = Vec::new();
+    let mut stack = vec![(home.to_path_buf(), 0usize)];
+    let mut seen = 0usize;
+    while let Some((dir, depth)) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for e in rd.flatten() {
+            seen += 1;
+            if seen > 60_000 {
+                break;
+            }
+            let name = e.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || skip.contains(&name.as_str()) {
+                continue;
+            }
+            let path = e.path();
+            let lname = name.to_lowercase();
+            let hits = terms.iter().filter(|t| lname.contains(t.as_str())).count();
+            // A folder named in the request counts for its children too.
+            let dir_hits = path
+                .parent()
+                .and_then(|p| p.file_name())
+                .map(|n| n.to_string_lossy().to_lowercase())
+                .map(|n| terms.iter().filter(|t| n.contains(t.as_str())).count())
+                .unwrap_or(0);
+            if hits > 0 || dir_hits > 0 {
+                let kind_bonus = if path.is_file() { 1 } else { 0 };
+                scored.push((hits * 3 + dir_hits + kind_bonus, path.to_string_lossy().into_owned()));
+            }
+            if depth < 5 && e.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                stack.push((path, depth + 1));
+            }
+        }
+    }
+    scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.len().cmp(&b.1.len())));
+    scored.into_iter().map(|(_, p)| p).take(limit).collect()
+}
+
 fn plan_files(task: &str, home: &Path) -> Result<Reply, String> {
-    let prompt = format!("Home directory: {}\n\nRequest: {task}", home.display());
+    let mut prompt = format!("Home directory: {}\n\nRequest: {task}", home.display());
+    if crate::llm::local().is_some() {
+        // No tools here: the real paths that fit the request come with it.
+        let found = fs_candidates(home, task, 60);
+        prompt.push_str("\n\nExisting paths that may be what the request refers to (use ONLY these for sources; do not invent paths):\n");
+        if found.is_empty() {
+            prompt.push_str("(none found)\n");
+        }
+        for p in found {
+            prompt.push_str(&format!("- {p}\n"));
+        }
+    }
     let v = claude_json(
         FILES_SYSTEM,
         &prompt,
@@ -1288,7 +1401,10 @@ fn plan_files(task: &str, home: &Path) -> Result<Reply, String> {
 
 /// A plan, or the question that settles it.
 pub fn files_reply(plan: &FilePlan, home: &Path) -> Result<Reply, String> {
-    if let Some(amb) = &plan.ambiguous {
+    // A small model fills optional objects with empties: "ambiguous" counts only
+    // when it names something and offers a real choice.
+    let ambiguous = plan.ambiguous.as_ref().filter(|a| !a.which.trim().is_empty() && a.options.len() >= 2);
+    if let Some(amb) = ambiguous {
         // Which one? Each option becomes the plan's source in turn.
         let options: Vec<Choice> = amb
             .options
@@ -1658,5 +1774,125 @@ mod tests {
             let v = claude_json(&system, q, ROUTER_SCHEMA, "haiku", None, &home, Duration::from_secs(45)).unwrap();
             println!("{q:?} -> {}", v);
         }
+    }
+
+    /// Scores local models on the router: `FEDO_EVAL_MODELS="a,b" cargo test -p fedo
+    /// --lib eval_local_router -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn eval_local_router() {
+        const CASES: &[(&str, &str)] = &[
+            ("how much disk space is left on my home partition", "command"),
+            ("why is the sky blue?", "chat"),
+            ("Meeting with Riya Friday 4pm", "event"),
+            ("I have to apply to Zomato before Oct 20, remind me", "deadline"),
+            ("remind me at 6pm to call the bank", "reminder"),
+            ("set an egg timer for a quarter hour", "timer"),
+            ("what do I have on tomorrow", "agenda"),
+            ("go to work/resumes, copy the ds resume into tempres and rename it to X.pdf", "files"),
+            ("get me obs", "install"),
+            ("force quit firefox", "kill"),
+            ("restart bluetooth", "command"),
+            ("my claude keeps breaking the layout, make me a proper instruction for it", "prompt"),
+            ("give pulkit a ring", "call"),
+            ("tell aparna on whatsapp i'm outside", "whatsapp"),
+            ("mail hr@x.com that I'm applying for the DS role", "email"),
+            ("mute yourself", "mute"),
+            ("go back to the previous song", "media"),
+            ("did anyone text me?", "notifications"),
+            ("explain what a mutex is", "chat"),
+            ("write a python function to reverse a string", "chat"),
+        ];
+        let models = std::env::var("FEDO_EVAL_MODELS").unwrap_or_default();
+        let system = format!(
+            "{ROUTER_SYSTEM}\nCurrent local date and time: {}.",
+            crate::calendar::now_for_prompt(crate::calendar::now())
+        );
+        for model in models.split(',').filter(|m| !m.is_empty()) {
+            let l = crate::llm::Local { url: "http://127.0.0.1:11434".into(), model: model.into() };
+            let mut ok = 0;
+            let mut total = std::time::Duration::ZERO;
+            let mut worst = std::time::Duration::ZERO;
+            println!("=== {model}");
+            for (q, want) in CASES {
+                let t = Instant::now();
+                let r = crate::llm::json(&l, &system, q, ROUTER_SCHEMA, Duration::from_secs(120));
+                let dt = t.elapsed();
+                total += dt;
+                worst = worst.max(dt);
+                let got = r.as_ref().ok().and_then(|v| v["intent"].as_str().map(str::to_string)).unwrap_or_else(|| format!("ERR {:?}", r.err()));
+                let hit = got == *want;
+                if hit {
+                    ok += 1;
+                }
+                println!("{} {:>5.1}s  {:<50} want {:<13} got {}", if hit { "ok " } else { "BAD" }, dt.as_secs_f32(), q.chars().take(50).collect::<String>(), want, got);
+            }
+            println!("--- {model}: {ok}/{} correct, avg {:.1}s, worst {:.1}s", CASES.len(), total.as_secs_f32() / CASES.len() as f32, worst.as_secs_f32());
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn eval_local_args() {
+        let system = router_system();
+        for model in std::env::var("FEDO_EVAL_MODELS").unwrap_or_default().split(',').filter(|m| !m.is_empty()) {
+            let l = crate::llm::Local { url: "http://127.0.0.1:11434".into(), model: model.into() };
+            println!("=== {model}  ({})", crate::calendar::now_for_prompt(crate::calendar::now()));
+            for q in [
+                "Meeting with Riya Friday 4pm",
+                "I have to apply to Zomato before Oct 20, remind me",
+                "remind me at 6pm to call the bank",
+                "dentist appointment next Tuesday at 10:30 for an hour",
+                "set an egg timer for a quarter hour",
+                "tell aparna on whatsapp i'm outside",
+                "mail hr@x.com that I'm applying for the DS role",
+            ] {
+                let v = crate::llm::json(&l, &system, q, ROUTER_SCHEMA, Duration::from_secs(60)).unwrap();
+                println!("{q:?}\n   -> {}", serde_json::to_string(&serde_json::json!({"intent": v["intent"], "args": v["args"]})).unwrap());
+            }
+        }
+    }
+
+    /// The whole assistant on the local model: file plan with found paths, the
+    /// prompt writer, an email draft, a streamed chat turn that remembers.
+    /// `cargo test -p fedo --lib live_local_backend -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn live_local_backend() {
+        let mut s = crate::settings::Settings::default();
+        s.ai_backend = "local".into();
+        crate::llm::configure(&s);
+        let home = std::env::temp_dir().join(format!("fedo-local-{}", std::process::id()));
+        std::fs::create_dir_all(home.join("work/resumes")).unwrap();
+        std::fs::write(home.join("work/resumes/DS_Resume_2026.pdf"), b"x").unwrap();
+        std::fs::write(home.join("work/resumes/Cover_Letter.pdf"), b"x").unwrap();
+        std::fs::create_dir_all(home.join("tempres")).unwrap();
+
+        let found = fs_candidates(&home, "copy the ds resume into tempres and rename it to X.pdf", 10);
+        println!("candidates: {found:#?}");
+        assert!(found.iter().any(|p| p.ends_with("DS_Resume_2026.pdf")));
+        let t = Instant::now();
+        let plan = plan_files("go to work/resumes, copy the ds resume into tempres and rename it to X.pdf", &home);
+        println!("plan ({:?}): {plan:?}", t.elapsed());
+        assert!(matches!(plan, Ok(Reply::Card { .. })), "no card: {plan:?}");
+
+        let t = Instant::now();
+        let p = write_prompt("no what youre doing is wrong, the save button should be disabled while loading", &home);
+        println!("prompt ({:?}): {p:?}", t.elapsed());
+        assert!(matches!(p, Ok(Reply::Prompt { .. })));
+
+        let l = crate::llm::local().unwrap();
+        let mut got = String::new();
+        let t = Instant::now();
+        let a1 = crate::llm::chat_stream(&l, "You are Fedo, a brief assistant.", &[], "Remember the word MANGO. Reply: ok", Duration::from_secs(60), |d| got.push_str(d)).unwrap();
+        let hist = vec![
+            serde_json::json!({"role":"user","content":"Remember the word MANGO. Reply: ok"}),
+            serde_json::json!({"role":"assistant","content":a1}),
+        ];
+        let a2 = crate::llm::chat_stream(&l, "You are Fedo, a brief assistant.", &hist, "What word did I ask you to remember?", Duration::from_secs(60), |_| {}).unwrap();
+        println!("chat ({:?}): {got:?} then {a2:?}", t.elapsed());
+        assert!(a2.to_uppercase().contains("MANGO"));
+        crate::llm::configure(&crate::settings::Settings::default());
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

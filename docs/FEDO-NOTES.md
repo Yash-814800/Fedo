@@ -3,6 +3,73 @@
 A running log of decisions, things verified on this machine, and known
 limitations, per `FEDO.md` rule 7. Newest phase first.
 
+## Local model backend (Phase 6.5)
+
+Settings → AI chooses who answers **all of Fedo's own requests**: the `claude`
+CLI (default) or a local Ollama model. Claude Code's sessions, hooks, approvals
+and the usage pill are unchanged either way.
+
+### What was built
+
+- `llm.rs`: Ollama over HTTP (`/api/chat`, structured output via `format`,
+  `think: false`, 4k window for requests / 8k for chat, streamed NDJSON for the
+  chat). `claude_json` / `claude_text` in `assist.rs` and the chat's send path
+  switch to it when the setting is "local"; nothing else changed, so every
+  validation downstream (risk rules, file-plan checks, confirm cards) applies
+  the same to a local model's answer.
+- What a model with no tools can't do, Fedo does for it: **file search**
+  (`fs_candidates` finds real paths under `~`; the plan is validated exactly
+  as before), **reading a dropped file** (text, or PDFs via `pdftotext`), **date
+  arithmetic** (the router prompt now carries a 15-day calendar table, and
+  "6pm" said after 6pm rolls to tomorrow in Rust — small models got weekdays
+  wrong without it).
+- Router prompt gained examples; settings: `aiBackend`, `localModel`,
+  `ollamaUrl`; UI lists installed models, flags a missing one and shows the
+  `ollama pull` line to run (Fedo doesn't download anything itself).
+
+### Model choice (RTX 3050 Laptop 4 GB, 14 GB RAM, measured)
+
+Router eval, 20 phrases (intent) then the argument checks:
+
+| Model | Intent | Typical latency | Notes |
+|---|---|---|---|
+| `qwen3:4b-instruct-2507-q4_K_M` | 19/20 | 1–2.5 s, **37 tok/s** chat | right dates, timers and messages after the calendar table; 3.5 GB, ~77 % on GPU when the desktop holds some VRAM |
+| `llama3.2:3b` | 19/20 | 0.6–1.2 s | fully on GPU (2.6 GB) but wrong weekday dates, a 15-min timer as 30, truncated "I'm" |
+| `qwen2.5:3b-instruct` | 17/20 | 0.6 s | mixed up event / deadline / reminder |
+
+Default: **qwen3:4b-instruct-2507**. Pulled here: the three above. Your own
+`qwen-claude` and the 7B abliterated model were left alone (a 7B doesn't fit
+the card and runs mostly on the CPU).
+
+### Ran against the real model
+
+File plan ("copy the ds resume into tempres and rename it to X.pdf" → a
+validated `cp` with real paths, 4.6 s), prompt writer (5.9 s), a streamed chat
+turn that remembers context ("MANGO"), and the time/phone intents with correct
+args.
+
+### What a small local model will *not* do as well — be honest
+
+- **Quality**: routing is as good as Claude on this set after the examples
+  and tables, but free-form answers, code help, long documents and nuanced
+  email drafts are clearly weaker. The email drafter tends to pad
+  ("please find my details attached") — it's a draft you read before Send.
+- **No tools, no web**: chat can't browse, run things or read files it isn't
+  handed; a PDF's text is cut to 12 000 characters (≈ 3k tokens).
+- **First request after a pause is slow** (model load 10–35 s; swapping with
+  your other Ollama model costs the same). Ollama unloads it after 5 minutes.
+- **VRAM**: with a browser and the desktop on the GPU only ~1.2 GB may be
+  free, and a 4B model then runs 23 % on the CPU (still 35 tok/s).
+- **Voice**: no local model that fits this card takes *audio* directly, and
+  Ollama has no audio input. "Understands voice" will be speech-to-text first
+  (whisper.cpp, Phase 8) feeding the same router — so voice works with either
+  backend. Not built yet.
+- **Not everything in FEDO.md is equal across backends**: the "Claude Code
+  session" features are Claude Code by definition; the usage pill is
+  Claude-only (a local run produces no plan numbers); Phase 4's `claude -p
+  --json-schema` guarantee is replaced by Ollama's schema-constrained output
+  plus Fedo's own re-validation.
+
 ## Phase 6 — phone & messages (KDE Connect, ZapZap, Gmail)
 
 ### What was built

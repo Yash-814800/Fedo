@@ -112,6 +112,25 @@ pub fn now_for_prompt(epoch: i64) -> String {
     )
 }
 
+/// The next two weeks as a lookup table for a model that cannot do calendar
+/// arithmetic: "Friday = 2026-10-16". The first of each weekday is what a bare
+/// weekday or "next <weekday>" means.
+pub fn days_ahead_for_prompt(now: i64, days: i32) -> String {
+    const FULL: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    let mut parts = Vec::new();
+    for i in 0..days {
+        let t = day_start(now, i) + 12 * 3600;
+        let l = local(t);
+        let label = match i {
+            0 => format!("today {}", FULL[l.weekday as usize]),
+            1 => format!("tomorrow {}", FULL[l.weekday as usize]),
+            _ => FULL[l.weekday as usize].to_string(),
+        };
+        parts.push(format!("{label} = {:04}-{:02}-{:02}", l.year, l.month, l.day));
+    }
+    parts.join("; ")
+}
+
 pub fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -252,6 +271,15 @@ mod tests {
         assert_eq!(describe(t, false), "Fri 16 Oct, 4:05 pm");
         assert_eq!(describe(from_local(2026, 10, 20, 12, 0), true), "Tue 20 Oct");
         assert_eq!(describe(from_local(2026, 10, 16, 0, 30), false), "Fri 16 Oct, 12:30 am");
+    }
+
+    #[test]
+    fn the_calendar_table_names_each_day() {
+        let t = from_local(2026, 10, 10, 21, 0);
+        let s = days_ahead_for_prompt(t, 8);
+        assert!(s.starts_with("today Saturday = 2026-10-10; tomorrow Sunday = 2026-10-11; Monday = 2026-10-12"), "{s}");
+        assert!(s.contains("Friday = 2026-10-16"));
+        assert!(s.contains("Saturday = 2026-10-17"));
     }
 
     #[test]

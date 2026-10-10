@@ -69,6 +69,11 @@ impl Chat {
         *c = Conversation { epoch, ..Default::default() };
     }
 
+    /// The plain-text turns so far, as chat messages for a local model.
+    pub fn history_messages(&self) -> Vec<Value> {
+        self.inner.lock().unwrap().plain.clone()
+    }
+
     pub fn session_id(&self) -> Option<String> {
         self.inner.lock().unwrap().session_id.clone()
     }
@@ -261,6 +266,9 @@ pub async fn send(
         None => None,
     };
     let turn = chat.begin();
+    if let Some(l) = crate::llm::local() {
+        return send_local(app, chat, &turn, l, query, context).await;
+    }
     let resume = chat.session_id();
     let prompt = prompt_for(turn.first, context.as_ref(), &query);
     let inbox = crate::files::inbox_dir();
@@ -287,6 +295,71 @@ pub async fn send(
         chat.set_session_id(&turn, id);
     }
     Ok(ChatReply { text: outcome.text })
+}
+
+// ── The local model ───────────────────────────────────────────────────────────
+
+/// What a dropped file contributes to a prompt for a model with no tools: its
+/// text, cut to `max` characters. PDFs go through `pdftotext` when installed.
+pub fn read_for_model(path: &str, max: usize) -> Result<String, String> {
+    let p = std::path::Path::new(path);
+    let is_pdf = p.extension().and_then(|e| e.to_str()).is_some_and(|e| e.eq_ignore_ascii_case("pdf"));
+    let text = if is_pdf {
+        let out = std::process::Command::new("pdftotext")
+            .args(["-layout", path, "-"])
+            .output()
+            .map_err(|_| "Reading PDFs locally needs `pdftotext` (sudo dnf install poppler-utils).".to_string())?;
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    } else {
+        let bytes = std::fs::read(p).map_err(|e| e.to_string())?;
+        if bytes.iter().take(4096).any(|b| *b == 0) {
+            return Err("That file isn't text, and the local model can only read text and PDFs.".into());
+        }
+        String::from_utf8_lossy(&bytes).into_owned()
+    };
+    let t: String = text.chars().take(max).collect();
+    if t.trim().is_empty() {
+        return Err("There was no text to read in that file.".into());
+    }
+    Ok(t)
+}
+
+const LOCAL_SYSTEM_TAIL: &str = " Answer briefly and plainly. You run on a small local model without internet access or tools: \
+if asked to browse, run commands or open files you can't see, say you can't from here.";
+
+async fn send_local(
+    app: &AppHandle,
+    chat: &Chat,
+    turn: &Turn,
+    l: crate::llm::Local,
+    query: String,
+    context: Option<ChatContext>,
+) -> Result<ChatReply, String> {
+    // A dropped file: its text rides with the first question.
+    let mut user = query.clone();
+    if let (true, Some(ChatContext::File { name, path })) = (turn.first, context.as_ref()) {
+        let text = read_for_model(path, 12_000)?;
+        user = format!("The user dropped a file named “{name}”. Its text:\n---\n{text}\n---\n\n{query}");
+    }
+    let user_for_history = user.clone();
+    let history = chat.history_messages();
+    let system = format!("{}{LOCAL_SYSTEM_TAIL}", system_prompt());
+    let app2 = app.clone();
+    let answer = tauri::async_runtime::spawn_blocking(move || {
+        let mut so_far = String::new();
+        crate::llm::chat_stream(&l, &system, &history, &user, TURN_LIMIT, |piece| {
+            so_far.push_str(piece);
+            let _ = tauri::Emitter::emit(&app2, "chat-delta", so_far.clone());
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    if answer.is_empty() {
+        return Err("The local model returned nothing.".into());
+    }
+    // The file text stays in the history, so a follow-up can still ask about it.
+    chat.commit(turn, &user_for_history, &answer);
+    Ok(ChatReply { text: answer })
 }
 
 struct Outcome {

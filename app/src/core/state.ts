@@ -106,6 +106,9 @@ export interface Settings {
   webviewIdleSeconds: number;
   notifyOnDone: boolean;
   notifyAfterSeconds: number;
+  aiBackend: "claude" | "local";
+  localModel: string;
+  ollamaUrl: string;
   phoneNotify: boolean;
   phoneNotifyApps: string[];
   phoneCountryCode: string;
@@ -155,6 +158,9 @@ export const DEFAULT_SETTINGS: Settings = {
   webviewIdleSeconds: 60,
   notifyOnDone: true,
   notifyAfterSeconds: 20,
+  aiBackend: "claude",
+  localModel: "qwen3:4b-instruct-2507-q4_K_M",
+  ollamaUrl: "http://127.0.0.1:11434",
   phoneNotify: true,
   phoneNotifyApps: ["Phone", "Dialer", "Messages", "WhatsApp"],
   phoneCountryCode: "",

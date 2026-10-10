@@ -84,9 +84,12 @@ macOS app in this fork.
 
 - Rust + TypeScript (Tauri 2), no framework on the frontend. The
   character is drawn in code (Canvas 2D), no Rive/Lottie/image assets.
-- **No API keys anywhere.** All intelligence goes through the `claude`
-  CLI the user is already logged into. No Anthropic/OpenAI/Gemini/Ollama
-  provider code, no OS keychain/Secret Service key storage.
+- **No API keys anywhere.** Fedo's own requests are answered by one of two
+  backends, chosen in Settings → AI: the `claude` CLI the user is already
+  logged into (default), or a **local Ollama model on this machine**
+  (`llm.rs`; changed from "no Ollama" at the owner's request, Phase 6.5).
+  No cloud provider code, no OS keychain/Secret Service key storage. Claude
+  Code's own sessions and hooks are always Claude Code.
 - No telemetry. Network calls only to services the user configured
   (today: none that need configuring — Spotify is read locally over
   MPRIS/D-Bus).
