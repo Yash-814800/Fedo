@@ -26,7 +26,8 @@
       "icons/128x128@2x.png"
     ],
     "resources": {
-      "../target/release/fedo-hook": "fedo-hook"
+      "../target/release/fedo-hook": "fedo-hook",
+      "../target/release/fedo-stt": "fedo-stt"
     },
     "copyright": "© Louis Raille, Fedo additions © 2026",
     "category": "DeveloperTool",

@@ -27,6 +27,11 @@ export interface ShortcutHost {
   flyOutOrHome(): void;
   /** Hands Ctrl+O / Ctrl+E to the view on screen (the Mac posts notifications). */
   viewCommand(command: ViewCommand): void;
+  /**
+   * Allows the permission request whose card is on screen. False when there
+   * isn't one showing: a key press never approves a card nobody has seen.
+   */
+  approveVisible?(): boolean;
 }
 
 /** What the open view is asked to do: open the highlighted item, toggle the diff. */
@@ -59,6 +64,33 @@ export function runGlobalShortcut(host: ShortcutHost, action: string, resume: ()
       resume();
       host.alert("prompt");
       break;
+
+    // The extension's "approve latest" key. With the permission card showing it
+    // is allowed; otherwise the card is brought up first (a second press then
+    // approves what you are looking at).
+    case "approveLatest":
+      if (host.approveVisible?.()) break;
+      runGlobalShortcut(host, "goToAlert", resume);
+      break;
+
+    // The most recent session: the one asking, else a working one (the newest
+    // listed), else any with a session.
+    case "jumpToLatest": {
+      const withSession = State.tasks.filter((t) => t.sessionId);
+      const asking = State.pendingApproval
+        ? withSession.find((t) => t.sessionId === State.pendingApproval?.sessionId)
+        : undefined;
+      const working = [...withSession].reverse().find((t) => ["working", "thinking", "searching"].includes(t.state));
+      const task = asking ?? working ?? withSession[withSession.length - 1];
+      if (!task) {
+        host.emote("annoyed");
+        Sound.play("error");
+        break;
+      }
+      void Bridge.openSession(task.sessionId ?? null, task.sessionCwd ?? null);
+      if (State.mode === "expanded") host.collapse();
+      break;
+    }
 
     case "goToAlert": {
       const asking = State.tasks.find((t) => t.state === "question");

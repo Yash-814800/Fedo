@@ -123,6 +123,8 @@ export interface Settings {
   voiceLanguage: string;
   voiceSpeak: boolean;
   wakeWord: boolean;
+  /** KDE Connect device id of the phone to use ("": the first reachable one). */
+  defaultPhoneDevice: string;
   phoneNotify: boolean;
   phoneNotifyApps: string[];
   phoneCountryCode: string;
@@ -179,6 +181,7 @@ export const DEFAULT_SETTINGS: Settings = {
   voiceLanguage: "auto",
   voiceSpeak: true,
   wakeWord: false,
+  defaultPhoneDevice: "",
   phoneNotify: true,
   phoneNotifyApps: ["Phone", "Dialer", "Messages", "WhatsApp"],
   phoneCountryCode: "",

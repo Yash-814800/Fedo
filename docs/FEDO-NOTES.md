@@ -70,6 +70,112 @@ args.
   --json-schema` guarantee is replaced by Ollama's schema-constrained output
   plus Fedo's own re-validation.
 
+## Phase 10 — packaging, autostart, polish (and the final report)
+
+### What was built
+
+- **`scripts/install.sh` / `uninstall.sh`**: build (or `--rpm`), install
+  `fedo`/`fedo-hook` to `~/.local/bin` and `fedo-stt` to
+  `~/.local/share/fedo/bin`, a desktop entry + icon, the `fedo.service` user
+  unit, the GNOME extension, and the hooks. `--dry-run` prints everything.
+  No sudo is run: missing packages are printed as one `sudo dnf install` line.
+  The uninstall removes all of it; hooks are taken out by editing (diff +
+  dated backup + confirm), not by restoring an old copy over newer user
+  changes, and the previous status line is put back.
+- **`fedo hooks status|install|uninstall [--yes]`**: the install script's hook
+  step. Same preview → fingerprint → dated backup → write path as Settings;
+  the diff is printed and nothing is written without a "y".
+- **`fedo.service`**: `Restart=on-failure` (a Quit from the ghost stays
+  quit), `WantedBy=graphical-session.target`.
+- **The desktop entry fixed the shortcuts portal.** Before, the log said
+  `NotAllowed: An app id is required`; with `org.fedo.Fedo.desktop` installed it
+  logs `registered with the desktop portal`. (The RPM's own entry is
+  `Fedo.desktop`, which does not match the app id, so an RPM-only install may
+  not get portal shortcuts; the extension's keys don't depend on it.)
+- **RPM**: `npx tauri build --bundles rpm` → `Fedo-0.0.1-1.x86_64.rpm`, 5.1 MB:
+  `/usr/bin/fedo`, `/usr/lib/Fedo/{fedo-hook,fedo-stt}`, desktop entry, icons.
+  Built, contents checked with `rpm -qpl`; **not installed** (needs sudo).
+- **Settings**: added default phone (`defaultPhoneDevice`; used when it is paired
+  and reachable) and the extension's keys (read/written through `gsettings`,
+  validated). Sounds, mute, auto-close, webview-destroy delay, notify-when-done
+  + phone-app filter, voice (model, language, speak, wake word), usage pill and
+  reminder offsets were already there.
+- **Keys** (GNOME extension, GSettings schema, window-manager keybindings):
+  push-to-talk, toggle island, open chat, approve latest, jump to latest, mute —
+  all `Super+Alt+<letter>` so they can't collide with the portal's `Ctrl+Alt`
+  shortcuts. `approveLatest` allows only a permission card that is **on
+  screen** (otherwise it brings the card up first); a question is never
+  approved by a key. New daemon method `Action(s name)`.
+- **README** rewritten with the "Forked from coucou by Louis Raillé (MIT)" credit.
+- Also: the Phase 8 push-to-talk default moved from `Ctrl+Alt+Space` (which
+  was also the portal's *open chat*) to `Super+Alt+V`.
+
+### Verified on this machine
+
+- `install.sh` run for real: service enabled and started; `SIGKILL` →
+  restarted by systemd (`NRestarts=1`); `Quit` over D-Bus → `inactive` and
+  stays down; started again by hand. `Action jumpToLatest` is accepted and
+  reaches the island; an unknown name is refused (`Invalid argument "name"`).
+- `fedo hooks install` with `n` on stdin: shows "No change", writes nothing.
+- RPM built; `cargo test --workspace` (231 + 36) and `npm test` (298) pass.
+- Idle after the service starts: **66 MB RSS / 30 MB PSS, 0 % CPU**, no
+  wake-word process.
+
+### Final report — feature table
+
+| Feature | Status | Notes |
+|---|---|---|
+| Ghost in the top bar, island, tuck away, peek | ✅ | Phase 1; extension needs a re-login after changes |
+| Claude Code approve / answer / done / jump to terminal | ✅ | Phase 3 |
+| Usage pill, weekly recap | ✅ | Phase 3 |
+| Chat, file drop, prompt writer | ✅ | Phases 3–4 |
+| Command assistant (install / kill / files) behind a card | ✅ | Phase 4; dangerous commands get a second confirmation |
+| Timers, reminders, calendar (EDS), deadlines | ✅ | Phase 5 |
+| Calls, SMS, send-to-phone | ⚠️ | KDE Connect; phone must be reachable; Android may need a tap |
+| WhatsApp (ZapZap), Gmail drafts | ⚠️ | open prefilled; you press Send; files go via clipboard/Files |
+| Local model (Ollama) as an alternative backend | ⚠️ | Phase 6.5; weaker routing |
+| Spotify pill and "play X" | ✅ | Phase 7; title verified after OpenUri |
+| Dictation, voice commands, spoken answers | ✅ | Phase 8; whisper `base` mishears short words |
+| Push-to-talk key | ⚠️ | D-Bus method verified; key not tried over a fullscreen game |
+| "Hey Fedo" wake word | ⚠️ | works; ~180 MB RSS over the +80 MB budget; opt-in |
+| Antigravity done detection | ✅ | Phase 9; hooks, no log watching needed |
+| Approve an Antigravity request from the island | ❌ | its hooks cannot carry a decision |
+| "Ask Antigravity …" | ✅ | confirm card first; `agy -p` is not read-only even in plan mode |
+| systemd service, one-script install/uninstall, RPM | ✅ | Phase 10 |
+| Island over a fullscreen game | ❌ | Wayland; replaced by voice + notification |
+| Idle ≤ 40 MB RSS | ⚠️ | 66 MB RSS / 30 MB PSS / 0 % CPU: GTK/WebKit pages count in RSS |
+| Island open ≤ 200 MB | ❌ | ~500 MB RSS (WebKitGTK); see Phase 1 notes for the refactor that would fix it |
+
+### Resource measurements (release build, service running)
+
+| State | RSS | PSS | CPU |
+|---|---|---|---|
+| Idle, island never built | 66 MB | 30 MB | 0.0 % |
+| Island open (Phase 1 measurement) | ~500 MB | ~270 MB | 0–9 % animating |
+| Listening / transcribing | + `pw-record` 10 MB; `fedo-stt` 332 MB for ~2 s | | back to 0 |
+| Wake word on | + ~180 MB | | ~1.3 % of one core |
+
+A live Claude Code or Antigravity session that is `working` keeps the webview
+loaded by design, so the teardown numbers only appear when nothing is running;
+I could not take that measurement while this session was driving the machine.
+
+### Known issues
+
+- **Memory budgets** above: idle RSS and island-open are over; a lean daemon
+  that starts the island as a separate short-lived process would fix it
+  (recommended since Phase 1, never done).
+- **Re-login needed** to load the extension changes (new keys, push-to-talk).
+  None of the extension keys were pressed on the real keyboard in this session.
+- **The island UI changes of Phases 8–10** (mic button, Settings rows, the
+  Antigravity card) were checked with `tsc` and the unit tests, not by eye.
+- Whisper `base` is weak on Hinglish: use `small`.
+- RPM-only installs get no desktop entry matching the app id (portal
+  shortcuts), no extension and no hooks — `install.sh` is the full path.
+- `agy` answers arrive as one block; Spotify isn't paused while Fedo listens;
+  Piper cold-starts ~2 s per reply.
+- Two sandbox helpers (`bwrap`, `glycin-image-rs`, ~10 MB) stay alive after the
+  tray icon loads.
+
 ## Phase 9 — Antigravity
 
 ### What is installed (checked)
@@ -159,7 +265,7 @@ exceptions"). The card says it may edit files and run commands.
   stops it (barge-in).
 - **Push-to-talk**: D-Bus `org.fedo.Fedo.PushToTalk()`, bound by the GNOME
   extension through a GSettings schema (`push-to-talk`, default
-  `<Control><Alt>space`, `Shell.ActionMode.ALL`). Press again to finish early.
+  `<Super><Alt>v` since Phase 10; was `<Control><Alt>space`, `Shell.ActionMode.ALL`). Press again to finish early.
   `install.sh` compiles the schema.
 - **Wake word "Hey Fedo"** (off by default, `wakeWord`): `app/voice/wake.py`
   under the venv. Vosk small-en in grammar mode (`hey fido`, `[unk]`: "fedo"

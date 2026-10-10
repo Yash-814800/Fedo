@@ -2,9 +2,31 @@
 <schemalist>
   <schema id="org.gnome.shell.extensions.fedo" path="/org/gnome/shell/extensions/fedo/">
     <key name="push-to-talk" type="as">
-      <default><![CDATA[['<Control><Alt>space']]]></default>
+      <default><![CDATA[['<Super><Alt>v']]]></default>
       <summary>Push-to-talk</summary>
-      <description>Press to start listening for a spoken command, press again to finish. Works over fullscreen apps. Change it with: gsettings --schemadir ~/.local/share/gnome-shell/extensions/fedo@yash/schemas set org.gnome.shell.extensions.fedo push-to-talk "['&lt;Super&gt;F12']"</description>
+      <description>Press to start listening for a spoken command, press again to finish. Works over fullscreen apps.</description>
+    </key>
+    <key name="toggle-island" type="as">
+      <default><![CDATA[['<Super><Alt>f']]]></default>
+      <summary>Open or close the island</summary>
+    </key>
+    <key name="open-chat" type="as">
+      <default><![CDATA[['<Super><Alt>c']]]></default>
+      <summary>Open the chat</summary>
+    </key>
+    <key name="approve-latest" type="as">
+      <default><![CDATA[['<Super><Alt>y']]]></default>
+      <summary>Approve the latest permission request</summary>
+      <description>Allows the permission request whose card is showing; if it is not showing, brings the card up first.</description>
+    </key>
+    <key name="jump-to-latest" type="as">
+      <default><![CDATA[['<Super><Alt>j']]]></default>
+      <summary>Jump to the latest session</summary>
+      <description>Raises the terminal or editor window of the session that is asking or working.</description>
+    </key>
+    <key name="mute-toggle" type="as">
+      <default><![CDATA[['<Super><Alt>m']]]></default>
+      <summary>Mute or unmute the ghost</summary>
     </key>
   </schema>
 </schemalist>

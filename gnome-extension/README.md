@@ -25,10 +25,23 @@ busctl --user introspect org.fedo.Fedo /org/fedo/Fedo
 busctl --user call org.fedo.Fedo /org/fedo/Fedo org.fedo.Fedo Toggle
 ```
 
-## Push-to-talk
+## Keys
 
-`schemas/org.gnome.shell.extensions.fedo.gschema.xml` defines the
-`push-to-talk` key (default `Ctrl+Alt+Space`). It calls `PushToTalk()` on the
-daemon: press to start listening, press again to finish. It is a window-manager
-keybinding, so it works over a fullscreen app. `install.sh` compiles the schema
-(`glib-compile-schemas`); log out and in once for the shell to load the change.
+`schemas/org.gnome.shell.extensions.fedo.gschema.xml` defines the extension's
+keys. They are window-manager keybindings, so they work over a fullscreen app,
+and each one calls the daemon (`PushToTalk()` or `Action(name)`).
+
+| Key (GSettings) | Default | Does |
+|---|---|---|
+| `push-to-talk` | `Super+Alt+V` | listen for a spoken command; press again to finish |
+| `toggle-island` | `Super+Alt+F` | open or close the island |
+| `open-chat` | `Super+Alt+C` | open the chat |
+| `approve-latest` | `Super+Alt+Y` | allow the permission card **that is on screen**; if it isn't, bring it up |
+| `jump-to-latest` | `Super+Alt+J` | raise the window of the session that is asking or working |
+| `mute-toggle` | `Super+Alt+M` | mute / unmute |
+
+Change them in Fedo's Settings, or with `gsettings --schemadir
+~/.local/share/gnome-shell/extensions/fedo@yash/schemas set
+org.gnome.shell.extensions.fedo push-to-talk "['<Super><Alt>v']"`.
+`install.sh` compiles the schema; log out and in once for the shell to load a
+changed extension.

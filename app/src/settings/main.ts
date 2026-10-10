@@ -673,6 +673,51 @@ function generalSection(): HTMLElement {
     })();
   });
 
+  // Which paired phone calls and texts go to.
+  const phoneDevice = h("select", {}) as HTMLSelectElement;
+  phoneDevice.append(h("option", { value: "", text: "First reachable phone" }));
+  void Bridge.phoneListDevices().then((list) => {
+    for (const d of list ?? []) {
+      if (d.paired) phoneDevice.append(h("option", { value: d.id, text: d.name + (d.reachable ? "" : " (not reachable)") }));
+    }
+    phoneDevice.value = settings.defaultPhoneDevice;
+  });
+  phoneDevice.addEventListener("change", () => {
+    settings.defaultPhoneDevice = phoneDevice.value;
+    void save();
+  });
+
+  // The GNOME extension's keys (push-to-talk, approve, jump…): GSettings, not the portal.
+  const KEY_LABELS: Record<string, string> = {
+    "push-to-talk": "Push-to-talk (speak a command)",
+    "toggle-island": "Open or close the island",
+    "open-chat": "Open the chat",
+    "approve-latest": "Approve the permission on screen",
+    "jump-to-latest": "Jump to the latest session",
+    "mute-toggle": "Mute or unmute",
+  };
+  const keyRows = h("div", {});
+  void Bridge.extensionKeysGet().then((keys) => {
+    if (!keys?.length) {
+      keyRows.append(h("div", { class: "hint", text: "The GNOME extension isn't installed, so there are no top-bar keys (scripts/install.sh sets it up)." }));
+      return;
+    }
+    for (const k of keys) {
+      const input = h("input", { type: "text", value: k.accelerator, style: "width:170px", placeholder: "<Super><Alt>v" }) as HTMLInputElement;
+      const note = h("span", { class: "hint", text: "" });
+      input.addEventListener("change", async () => {
+        try {
+          await Bridge.extensionKeySet(k.name, input.value.trim());
+          note.textContent = "Saved.";
+        } catch (err) {
+          note.textContent = String(err).replace(/^Error:\s*/, "");
+        }
+      });
+      keyRows.append(h("div", { class: "row" }, h("label", { text: KEY_LABELS[k.name] ?? k.name }), input, note));
+    }
+    keyRows.append(h("div", { class: "hint", text: "Written as <Super><Alt>v. Approve only allows a permission card that is on screen." }));
+  });
+
   const screen = h("select", {}) as HTMLSelectElement;
   screen.append(
     h("option", { value: "primary", text: t("Main display") }),
@@ -748,8 +793,14 @@ function generalSection(): HTMLElement {
     h("div", { class: "row" },
       h("label", { text: "Hey Fedo" }),
       wakeToggle,
-      h("span", { class: "hint", text: "always-on wake word (off: no process runs). Push-to-talk: Ctrl+Alt+Space." }),
+      h("span", { class: "hint", text: "always-on wake word (off: no process runs)" }),
     ),
+    h("div", { class: "row" },
+      h("label", { text: "Default phone" }),
+      phoneDevice,
+      h("span", { class: "hint", text: "for calls, texts and files" }),
+    ),
+    keyRows,
     h("div", { class: "row" },
       h("label", { text: "Event reminder" }),
       eventMinutes,

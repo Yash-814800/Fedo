@@ -507,6 +507,17 @@ export class Island {
 
   /** The island takes the keyboard, so its own shortcuts work (Mac: makeKey).
    *  It gives it back when it closes, or when the chat is left. */
+  approveVisible(): boolean {
+    const req = State.pendingApproval;
+    // A question is never "approved" by a key; only a permission card, on screen.
+    if (!req || req.questions || State.mode !== "expanded" || State.view !== "approval") return false;
+    void Bridge.log(`approve (key) req=${req.requestId}`);
+    Sound.play("approve");
+    void Bridge.approvalDecision(req.requestId, "allow");
+    this.closeApproval();
+    return true;
+  }
+
   takeKeyboard() {
     void Bridge.focusWindow(true);
   }

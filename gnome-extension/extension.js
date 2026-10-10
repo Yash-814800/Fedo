@@ -101,18 +101,29 @@ export default class FedoExtension extends Extension {
         // spoken and sent as a notification).
         try {
             this._settings = this.getSettings();
-            Main.wm.addKeybinding('push-to-talk', this._settings,
-                Meta.KeyBindingFlags.IGNORE_AUTOREPEAT, Shell.ActionMode.ALL,
-                () => this._call('PushToTalk'));
-            this._keybinding = true;
+            this._boundKeys = [];
+            const bind = (key, handler) => {
+                Main.wm.addKeybinding(key, this._settings,
+                    Meta.KeyBindingFlags.IGNORE_AUTOREPEAT, Shell.ActionMode.ALL, handler);
+                this._boundKeys.push(key);
+            };
+            bind('push-to-talk', () => this._call('PushToTalk'));
+            // Everything else is one daemon method taking the action's id.
+            const action = name => () => this._call('Action', '(s)', [name]);
+            bind('toggle-island', action('toggleIsland'));
+            bind('open-chat', action('openChat'));
+            bind('approve-latest', action('approveLatest'));
+            bind('jump-to-latest', action('jumpToLatest'));
+            bind('mute-toggle', action('muteToggle'));
         } catch (e) {
             console.error(`fedo: push-to-talk keybinding unavailable: ${e.message}`);
         }
     }
 
     disable() {
-        if (this._keybinding) Main.wm.removeKeybinding('push-to-talk');
-        this._keybinding = false;
+        for (const key of this._boundKeys ?? [])
+            Main.wm.removeKeybinding(key);
+        this._boundKeys = [];
         this._settings = null;
         if (this._watchId) Gio.bus_unwatch_name(this._watchId);
         this._watchId = 0;

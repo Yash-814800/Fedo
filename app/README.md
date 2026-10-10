@@ -23,7 +23,8 @@ sudo dnf install -y gcc gcc-c++ make pkgconf-pkg-config rust cargo \
 cd app
 npm install
 npm run tauri dev      # live-reloading development build
-npm run pack           # AppImage, .deb and .rpm in app/release/
+npx tauri build --no-bundle   # the real binary (target/release/fedo)
+npx tauri build --bundles rpm # target/release/bundle/rpm/
 ```
 
 `npm run dev` alone serves the front end in an ordinary browser, enough to
@@ -41,7 +42,8 @@ app/
     settings/          the settings window
   src-tauri/           Rust backend: window, Unix socket, pollers
   hook/                fedo-hook, the Claude Code / Antigravity relay
-  scripts/             icon generator
+  voice/               fedo-stt (whisper.cpp helper) and wake.py ("Hey Fedo")
+  scripts/             icon and sound generators
 ```
 
 ## What's different from upstream coucou
@@ -49,10 +51,10 @@ app/
 - **No macOS, no Windows.** `NotchBuddy/` (the Mac app) and every
   Windows-only code path (`platform/windows.rs`, the NSIS installer, the
   named-pipe hook transport) are gone.
-- **No API keys anywhere.** The Anthropic/Google AI/OpenAI chat providers,
-  Ollama/LM Studio local-model chat, and the OS keychain/Secret Service
-  key storage are all removed. The chat runs every turn through the `claude`
-  CLI you are logged into (`claude -p`).
+- **No API keys anywhere.** The Anthropic/Google AI/OpenAI chat providers
+  and the OS keychain/Secret Service key storage are removed. Every request
+  goes through the `claude` CLI you are logged into (`claude -p`), or — Settings
+  → AI — a local Ollama model on this machine.
 - **No third-party service integrations.** Stripe, n8n, GitHub, Vercel,
   Resend, Notion and Cal.com are gone. Spotify (read over MPRIS/D-Bus,
   Linux-only even in the coucou fork) is the one integration kept.

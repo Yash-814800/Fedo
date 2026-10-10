@@ -2,7 +2,8 @@
 // `busctl`, and later the systemd user service) talks to.
 //
 //   object    /org/fedo/Fedo
-//   methods   Toggle()  Show(s view)  Hide()  FocusSession(s id)  PushToTalk()  Quit()
+//   methods   Toggle()  Show(s view)  Hide()  FocusSession(s id)  PushToTalk()
+//             Action(s name)  Quit()
 //   props     State       s   "idle" | "working" | "needs-you"  (the icon's dot)
 //             Visibility  s   "hidden" | "peek" | "open"        (the island)
 //             Muted       b   sounds off; read/write, saved in settings.json
@@ -46,6 +47,14 @@ fn known_view(view: &str) -> bool {
     matches!(view, "" | "overview" | "settings" | "mail" | "prompt")
 }
 
+/// What `Action` accepts: ids the island's shortcut handler knows.
+fn known_action(name: &str) -> bool {
+    matches!(
+        name,
+        "toggleIsland" | "openChat" | "goToAlert" | "jumpToTerminal" | "muteToggle" | "approveLatest" | "jumpToLatest"
+    )
+}
+
 /// Registers the name and serves calls on a thread of its own. Quietly logs and
 /// carries on when the bus or the name is not available: Fedo still works
 /// without the extension.
@@ -87,6 +96,16 @@ pub fn start(app: &AppHandle) {
                     return Err(MethodErr::invalid_arg("view"));
                 }
                 crate::island::request(&a, "show", Some(view));
+                Ok(())
+            });
+            // The extension's other keys: the same actions the global
+            // shortcuts run (open chat, mute…), plus approve / jump to latest.
+            let a = app.clone();
+            b.method("Action", ("name",), (), move |_, _, (name,): (String,)| {
+                if !known_action(&name) {
+                    return Err(MethodErr::invalid_arg("name"));
+                }
+                crate::shortcuts::dispatch(&a, &name);
                 Ok(())
             });
             // Push-to-talk (the extension's keybinding): listen, or end now.

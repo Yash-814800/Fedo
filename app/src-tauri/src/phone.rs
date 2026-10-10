@@ -73,9 +73,23 @@ pub fn devices() -> Result<Vec<Device>, String> {
     Ok(out)
 }
 
-/// The phone to act on: paired and reachable. If none is, says what is the case
-/// so the card can tell the user what to fix.
+static PREFERRED: std::sync::Mutex<String> = std::sync::Mutex::new(String::new());
+
+/// Settings → default phone: used when it is paired and reachable.
+pub fn set_preferred(id: &str) {
+    *PREFERRED.lock().unwrap() = id.trim().to_string();
+}
+
+/// The phone to act on: the chosen default if it is up, else the first paired
+/// and reachable one. If none is, says what is the case so the card can tell
+/// the user what to fix.
 pub fn usable(devs: &[Device]) -> Result<Device, String> {
+    let preferred = PREFERRED.lock().unwrap().clone();
+    if !preferred.is_empty() {
+        if let Some(d) = devs.iter().find(|d| d.id == preferred && d.paired && d.reachable) {
+            return Ok(d.clone());
+        }
+    }
     if let Some(d) = devs.iter().find(|d| d.paired && d.reachable) {
         return Ok(d.clone());
     }
@@ -92,6 +106,12 @@ pub fn usable(devs: &[Device]) -> Result<Device, String> {
         why.push_str(" KDE Connect has no devices yet.");
     }
     Err(why)
+}
+
+/// For Settings: every device KDE Connect knows.
+#[tauri::command]
+pub async fn phone_list_devices() -> Vec<Device> {
+    tauri::async_runtime::spawn_blocking(|| devices().unwrap_or_default()).await.unwrap_or_default()
 }
 
 pub fn usable_device() -> Result<Device, String> {

@@ -272,6 +272,8 @@ fn stt_binary() -> Option<PathBuf> {
     [
         dir.join("fedo-stt"),
         crate::platform::local_dir().join("bin/fedo-stt"),
+        // The RPM puts resources in /usr/lib/Fedo.
+        PathBuf::from("/usr/lib/Fedo/fedo-stt"),
         dir.join("../release/fedo-stt"),
         dir.join("../debug/fedo-stt"),
     ]

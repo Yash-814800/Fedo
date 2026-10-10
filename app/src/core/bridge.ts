@@ -165,6 +165,9 @@ export const Bridge = {
   assistRun: (command: string, inline: boolean) => call<AssistRun>("assist_run", { command, inline }),
   assistCopy: (text: string) => call<boolean>("assist_copy", { text }),
   /** Voice (Rust voice.rs): everything runs locally, only after the first use. */
+  phoneListDevices: () => call<{ id: string; name: string; paired: boolean; reachable: boolean }[]>("phone_list_devices"),
+  extensionKeysGet: () => call<{ name: string; accelerator: string }[]>("extension_keys_get"),
+  extensionKeySet: (name: string, accelerator: string) => callOrThrow<void>("extension_key_set", { name, accelerator }),
   voiceStatus: () => call<{ stt: boolean; tts: boolean; wake: boolean; recording: boolean; mic: boolean }>("voice_status"),
   voiceToggle: (mode: "dictate" | "command") => call<void>("voice_toggle", { mode }),
   voiceCancel: () => call<void>("voice_cancel"),

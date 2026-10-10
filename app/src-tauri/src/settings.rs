@@ -85,6 +85,9 @@ pub struct Settings {
     pub voice_speak: bool,
     /// Listen for "Hey Fedo" (opt-in; a process runs only while it is on).
     pub wake_word: bool,
+    /// KDE Connect device id of the phone to use when several are paired
+    /// (empty: the first one that is reachable).
+    pub default_phone_device: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -141,6 +144,7 @@ impl Default for Settings {
             voice_language: "auto".into(),
             voice_speak: true,
             wake_word: false,
+            default_phone_device: String::new(),
         }
     }
 }
@@ -426,7 +430,8 @@ mod tests {
   "voiceModel": "small",
   "voiceLanguage": "hi",
   "voiceSpeak": false,
-  "wakeWord": true
+  "wakeWord": true,
+  "defaultPhoneDevice": "abcdef0123456789"
 }"##;
 
     fn custom() -> Value {
@@ -818,6 +823,7 @@ mod tests {
                 "voiceLanguage",
                 "voiceSpeak",
                 "wakeWord",
+                "defaultPhoneDevice",
             ]
         );
         let _ = std::fs::remove_dir_all(&dir);

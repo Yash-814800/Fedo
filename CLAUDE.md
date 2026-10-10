@@ -68,6 +68,9 @@ limitations recorded as each phase lands.
 - `app/scripts/make-sounds.mjs` — renders `app/sounds/*.wav` (Fedo's own,
   synthesised; rerun it after editing a sound). Users override any of them
   with `~/.config/fedo/sounds/<name>.wav`.
+- `scripts/install.sh` / `uninstall.sh` — the one-script install (service,
+  desktop entry, extension, hooks via `fedo hooks install`); `--dry-run` first.
+  `~/.local/share/fedo/actions.log` records every confirmed action.
 - `docs/AGENTS.md` — the hook relay's third-party agent protocol (still
   accurate and live, even though only Claude Code and Antigravity get a
   one-click installer in this build).
@@ -82,7 +85,7 @@ cd app && npm install && npm run tauri dev
 
 Ship / test the real artefact with `npx tauri build --no-bundle` (binary) or
 `npx tauri build --bundles rpm`. A bare `cargo build` binary loads the dev
-server URL and shows nothing without `npm run dev`. `npm test` (295 tests) and
+server URL and shows nothing without `npm run dev`. `npm test` (298 tests) and
 `cargo test --workspace` must stay green.
 
 Needs Rust, Node 20+, and the Fedora packages listed in

@@ -33,6 +33,7 @@ mod phoneplan;
 mod scheduler;
 mod spotify;
 mod voice;
+mod extension_keys;
 mod timeplan;
 mod unlock;
 #[cfg(target_os = "linux")]
@@ -103,6 +104,7 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
     };
     let settings = shared.settings.lock().unwrap().clone();
     llm::configure(&settings);
+    phone::set_preferred(&settings.default_phone_device);
     if let Err(err) = settings::save(&settings) {
         log::line(format!("could not save settings: {err}"));
     }
@@ -621,10 +623,121 @@ pub fn stats() -> i32 {
     }
 }
 
+/// `fedo hooks status|install|uninstall [--yes]`: the one-script install's
+/// hook step. Shows the diff and the backup it will take and writes only after
+/// a "y" (the same preview → fingerprint → dated backup path as Settings).
+pub fn hooks_cli(args: &[String]) -> i32 {
+    use std::io::Write;
+    let sub = args.first().map(String::as_str).unwrap_or("status");
+    let yes = args.iter().any(|a| a == "--yes");
+    let ours = |ok: bool| if ok { "installed" } else { "not installed" };
+    let claude = hooks::status();
+    let agy = agents::list().into_iter().find(|a| a.id == "antigravity");
+    if sub == "status" {
+        println!("Claude Code hooks: {}", ours(claude.installed));
+        match &agy {
+            Some(a) => println!("Antigravity hooks: {}", ours(a.installed)),
+            None => println!("Antigravity hooks: unknown"),
+        }
+        return 0;
+    }
+    let install = match sub {
+        "install" => true,
+        "uninstall" => false,
+        _ => {
+            eprintln!("usage: fedo hooks status|install|uninstall [--yes]");
+            return 2;
+        }
+    };
+
+    // The relay Claude Code runs lives in our own folder; put it there first.
+    if install {
+        let dest = settings::hook_exe_path();
+        let exe = std::env::current_exe().ok();
+        let src = exe.as_ref().and_then(|e| {
+            let dir = e.parent()?;
+            [
+                dir.join(platform::HOOK_EXE),
+                dir.join("../release").join(platform::HOOK_EXE),
+                std::path::Path::new("/usr/lib/Fedo").join(platform::HOOK_EXE),
+            ]
+            .into_iter()
+            .find(|p| p.exists())
+        });
+        match src {
+            Some(src) => {
+                let ok = platform::ensure_private_dir(&settings::local_dir()).is_ok()
+                    && dest.parent().is_some_and(|d| std::fs::create_dir_all(d).is_ok())
+                    && std::fs::copy(&src, &dest).is_ok();
+                if !ok {
+                    eprintln!("could not copy the relay to {}", dest.display());
+                    return 1;
+                }
+            }
+            None if !dest.exists() => {
+                eprintln!("fedo-hook not found next to {}", exe.map(|e| e.display().to_string()).unwrap_or_default());
+                return 1;
+            }
+            None => {}
+        }
+    }
+
+    let mut failed = false;
+    // (label, diff, backup, path, fingerprint, apply)
+    type Apply = Box<dyn Fn(&str) -> Result<String, String>>;
+    let mut steps: Vec<(&str, config_file::Plan, Apply)> = Vec::new();
+    match hooks::preview(install) {
+        Ok(p) => steps.push((
+            "Claude Code (~/.claude/settings.json)",
+            config_file::Plan { diff: p.diff, backup: p.backup, path: p.settings_path, fingerprint: p.fingerprint },
+            Box::new(move |fp| hooks::write(install, fp)),
+        )),
+        Err(e) => {
+            eprintln!("Claude Code: {e}");
+            failed = true;
+        }
+    }
+    if agy.as_ref().is_some_and(|a| a.installed || install) {
+        match agents::preview("antigravity", install) {
+            Ok(p) => steps.push(("Antigravity (~/.gemini/config/hooks.json)", p, Box::new(move |fp| agents::apply("antigravity", install, fp)))),
+            Err(e) => {
+                eprintln!("Antigravity: {e}");
+                failed = true;
+            }
+        }
+    }
+    for (label, plan, apply) in steps {
+        if plan.diff.trim().is_empty() || plan.diff.trim() == "No change." {
+            println!("{label}: already {}", if install { "installed" } else { "clean" });
+            continue;
+        }
+        println!("── {label}\n{}\nbackup: {}", plan.diff, if plan.backup.is_empty() { "(nothing to back up)" } else { &plan.backup });
+        let go = yes || {
+            print!("Apply this change? [y/N] ");
+            let _ = std::io::stdout().flush();
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line).is_ok() && matches!(line.trim().to_lowercase().as_str(), "y" | "yes")
+        };
+        if !go {
+            println!("skipped");
+            continue;
+        }
+        match apply(&plan.fingerprint) {
+            Ok(_) => println!("done"),
+            Err(e) => {
+                eprintln!("failed: {e}");
+                failed = true;
+            }
+        }
+    }
+    i32::from(failed)
+}
+
 pub fn run() {
     platform::prepare_environment();
     let loaded = settings::load();
     llm::configure(&loaded);
+    phone::set_preferred(&loaded.default_phone_device);
     i18n::set_picked(&loaded.language);
     let gate = Arc::new(PollGate::new());
 
@@ -729,6 +842,9 @@ pub fn run() {
             spotify::spotify_control,
             spotify::spotify_open,
             spotify::spotify_installed,
+            phone::phone_list_devices,
+            extension_keys::extension_keys_get,
+            extension_keys::extension_key_set,
             voice::voice_status,
             voice::voice_toggle,
             voice::voice_cancel,
