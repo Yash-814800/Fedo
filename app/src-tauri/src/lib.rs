@@ -22,7 +22,9 @@ mod session_window;
 mod settings;
 mod shortcuts;
 mod sounds;
+mod notify;
 mod spotify;
+mod unlock;
 #[cfg(target_os = "linux")]
 mod stats;
 mod tray;
@@ -472,7 +474,7 @@ fn approval_decline(app: AppHandle, request_id: String) {
 
 // ── Chat and files ────────────────────────────────────────────────────────────
 
-/// One chat turn. Not wired to anything yet — see chat.rs.
+/// One chat turn, run through `claude -p` (chat.rs).
 #[tauri::command]
 async fn chat_send(
     app: AppHandle,
@@ -672,6 +674,7 @@ pub fn run() {
             log_line,
             chat_send,
             chat_reset,
+            notify::notify_done,
             ingest_file,
             open_settings_window,
             shortcuts_status,
@@ -717,6 +720,7 @@ pub fn run() {
             hooks::ensure_hook_exe(&handle);
             pipe::start(handle.clone());
             dbus_service::start(&handle);
+            unlock::start(handle.clone());
             spotify::sync(&handle, &loaded.active_integrations);
             shortcuts::apply(&handle, &loaded.shortcuts);
             // Startup is a burst of one-off work (GTK, the tray, the portal);

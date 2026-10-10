@@ -10,8 +10,10 @@
 //     manager to raise it, over the x11rb that global-hotkey already brings;
 //   * kitty, whatever the session, also selects the session's tab when its
 //     remote control listens on a socket.
-// GNOME on Wayland has no such door for native windows: nothing is found, and
-// the caller opens the folder in VS Code as before.
+//   * GNOME Shell: a client cannot raise another client's window, the shell
+//     can. The Fedo extension (gnome-extension/) owns `org.fedo.Shell` and its
+//     `FocusWindow(au pids, s hint)` activates the window by PID. Without the
+//     extension nothing is found and the caller opens the folder in VS Code.
 //
 // Everything handed to a script or a command is a number read from /proc of a
 // process we found ourselves (or our own D-Bus name, checked); nothing from a
@@ -104,6 +106,8 @@ fn linked_chain(owners: &[u32], procs: &[Option<Proc>]) -> Vec<(u32, String)> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Method {
+    /// GNOME Shell, through the Fedo extension's `org.fedo.Shell` service.
+    Gnome,
     KWin,
     X11,
 }
@@ -115,7 +119,12 @@ fn methods(session_type: &str, wayland_display: &str, display: &str, desktop: &s
     let wayland = session_type.eq_ignore_ascii_case("wayland") || !wayland_display.trim().is_empty();
     let x11 = !display.trim().is_empty();
     let kde = desktop.split(':').any(|d| d.eq_ignore_ascii_case("kde"));
+    let gnome = desktop.split(':').any(|d| d.eq_ignore_ascii_case("gnome"));
     let mut out = Vec::new();
+    // The shell sees native Wayland windows and XWayland ones alike.
+    if gnome {
+        out.push(Method::Gnome);
+    }
     if kde && wayland {
         out.push(Method::KWin);
     }
@@ -148,6 +157,7 @@ pub fn focus_session_window(owners: &[u32], folder: &str) -> bool {
     .into_iter()
     .any(|method| {
         let done = match method {
+            Method::Gnome => gnome::activate(&pids, folder),
             Method::KWin => kwin::activate(&pids, folder),
             Method::X11 => x11::activate(&pids, folder),
         };
@@ -175,6 +185,27 @@ fn run_quietly(cmd: &mut Command, limit: Duration) -> bool {
                 return false;
             }
         }
+    }
+}
+
+// ── GNOME Shell: the extension's service ──────────────────────────────────────
+
+mod gnome {
+    use dbus::blocking::Connection;
+
+    use super::*;
+
+    const NAME: &str = "org.fedo.Shell";
+    const PATH: &str = "/org/fedo/Shell";
+
+    /// Asks the extension to raise the window of the nearest ancestor that has
+    /// one. False when the extension isn't loaded (no such name), or nothing
+    /// matched.
+    pub fn activate(pids: &[u32], folder: &str) -> bool {
+        let Ok(conn) = Connection::new_session() else { return false };
+        let proxy = conn.with_proxy(NAME, PATH, Duration::from_secs(2));
+        let r: Result<(bool,), _> = proxy.method_call(NAME, "FocusWindow", (pids.to_vec(), folder.to_string()));
+        r.map(|(found,)| found).unwrap_or(false)
     }
 }
 
@@ -510,8 +541,8 @@ mod tests {
         // Any X11 session.
         assert_eq!(methods("x11", "", ":0", "XFCE"), [X11]);
         // GNOME on Wayland: only XWayland windows can be reached.
-        assert_eq!(methods("wayland", "wayland-0", ":0", "ubuntu:GNOME"), [X11]);
-        assert_eq!(methods("wayland", "wayland-0", "", "GNOME"), []);
+        assert_eq!(methods("wayland", "wayland-0", ":0", "ubuntu:GNOME"), [Gnome, X11]);
+        assert_eq!(methods("wayland", "wayland-0", "", "GNOME"), [Gnome]);
         assert_eq!(methods("tty", "", "", ""), []);
     }
 

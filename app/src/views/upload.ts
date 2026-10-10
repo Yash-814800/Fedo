@@ -1,8 +1,8 @@
 // Drop zone, upload progress and the "what do you want to do with it" card —
 // ports of UploadView / UploadingView / ChooseView from IslandViewContent.swift.
 //
-// Sending a file by email is not in the Windows v1, so `choose` offers the one
-// action the spec asks for: ask a question about it.
+// `choose` offers "Ask a question" (the file's path rides with the first chat
+// message, so Claude Code can read it); sending it on is Phase 6.
 
 import { h, clear } from "./dom";
 import { State } from "../core/state";
@@ -95,6 +95,10 @@ export function buildChoose(actions: ViewActions): ViewHost {
       text: tl("Ask a question"),
       onclick: () => actions.setView("prompt"),
     }),
+    // The three below come alive with Phase 6 (Gmail, ZapZap, KDE Connect).
+    ...[N_("Gmail"), N_("ZapZap"), N_("Phone")].map((label) =>
+      h("button", { class: "btn secondary", text: tl(label), disabled: true, title: tl("Coming soon") }),
+    ),
     h("button", {
       class: "btn secondary",
       text: tl("Cancel"),

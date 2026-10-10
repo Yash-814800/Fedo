@@ -28,6 +28,21 @@ const HOVER_MS = 350;
 // the WM_CLASS but is a normal window.
 const ISLAND_WM_CLASS = 'Fedo';
 
+// What the daemon calls to bring a terminal forward ("jump to terminal"). A
+// Wayland client cannot raise another client's window; the shell can.
+const SHELL_BUS_NAME = 'org.fedo.Shell';
+const SHELL_OBJECT_PATH = '/org/fedo/Shell';
+const SHELL_IFACE_XML = `
+<node>
+  <interface name="org.fedo.Shell">
+    <method name="FocusWindow">
+      <arg type="au" direction="in" name="pids"/>
+      <arg type="s" direction="in" name="hint"/>
+      <arg type="b" direction="out" name="found"/>
+    </method>
+  </interface>
+</node>`;
+
 const FedoButton = GObject.registerClass(
 class FedoButton extends PanelMenu.Button {
     _init(onPrimary) {
@@ -64,6 +79,7 @@ export default class FedoExtension extends Extension {
         this._placing = false;
         this._cancellable = new Gio.Cancellable();
 
+        this._exportShellService();
         this._buildButton();
         Main.panel.addToStatusArea(this.uuid, this._button, 0, 'right');
 
@@ -97,9 +113,48 @@ export default class FedoExtension extends Extension {
             }
         }
         this._windowSignals.clear();
+        this._unexportShellService();
         this._proxy = null;
         this._button?.destroy();
         this._button = null;
+    }
+
+    // ── Jump to terminal ──────────────────────────────────────────────────────
+
+    _exportShellService() {
+        this._shellImpl = Gio.DBusExportedObject.wrapJSObject(SHELL_IFACE_XML, this);
+        this._shellImpl.export(Gio.DBus.session, SHELL_OBJECT_PATH);
+        this._shellNameId = Gio.bus_own_name(Gio.BusType.SESSION, SHELL_BUS_NAME,
+            Gio.BusNameOwnerFlags.NONE, null, null, null);
+    }
+
+    _unexportShellService() {
+        if (this._shellNameId) Gio.bus_unown_name(this._shellNameId);
+        this._shellNameId = 0;
+        this._shellImpl?.unexport();
+        this._shellImpl = null;
+    }
+
+    // org.fedo.Shell.FocusWindow(au pids, s hint) -> b. `pids` is the session's
+    // process ancestry, nearest first: the first one that owns a normal window
+    // wins, and among that process's windows the one whose title mentions
+    // `hint` (the project folder), else the most recently used. The daemon only
+    // sends numbers it read from /proc; nothing here is evaluated.
+    FocusWindow(pids, hint) {
+        const wanted = String(hint ?? '').toLowerCase();
+        // Most recently used first.
+        const windows = global.display.get_tab_list(Meta.TabList.NORMAL, null);
+        for (const pid of pids) {
+            const mine = windows.filter(w => w.get_pid() === pid && !w.is_skip_taskbar());
+            if (mine.length === 0) continue;
+            const byTitle = wanted
+                ? mine.find(w => (w.get_title() ?? '').toLowerCase().includes(wanted))
+                : null;
+            const target = byTitle ?? mine[0];
+            Main.activateWindow(target);
+            return true;
+        }
+        return false;
     }
 
     // ── Panel button ──────────────────────────────────────────────────────────

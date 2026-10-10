@@ -491,6 +491,17 @@ function generalSection(): HTMLElement {
     void save();
   });
 
+  const notifyAfter = h("input", {
+    type: "number", min: "0", max: "3600", step: "5",
+    value: String(Math.round(settings.notifyAfterSeconds)),
+    style: "width:72px",
+  }) as HTMLInputElement;
+  notifyAfter.addEventListener("change", () => {
+    settings.notifyAfterSeconds = Math.max(0, Math.min(3600, Number(notifyAfter.value) || 0));
+    notifyAfter.value = String(settings.notifyAfterSeconds);
+    void save();
+  });
+
   const screen = h("select", {}) as HTMLSelectElement;
   screen.append(
     h("option", { value: "primary", text: t("Main display") }),
@@ -533,6 +544,12 @@ function generalSection(): HTMLElement {
       toggle(settings.openOnHover, (v) => { settings.openOnHover = v; void save(); }),
     ),
     h("div", { class: "hint", text: t("Hovering the island opens it; it folds again shortly after the pointer leaves. Click inside to keep it open.") }),
+    h("div", { class: "row" },
+      h("label", { text: t("Notify when done") }),
+      toggle(settings.notifyOnDone, (v) => { settings.notifyOnDone = v; void save(); }),
+      notifyAfter,
+      h("span", { class: "hint", text: t("seconds or more, if the island isn't showing it") }),
+    ),
     h("div", { class: "row" },
       h("label", { text: t("Auto-close") }),
       autoClose,

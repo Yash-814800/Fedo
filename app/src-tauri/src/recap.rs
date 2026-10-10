@@ -699,6 +699,26 @@ pub fn observe(app: &AppHandle, payload: &Value) {
     }
 }
 
+/// Monday, 8:00 or later, local time, and the recap has not been shown yet
+/// this week: the moment "first unlock of Monday morning" is about.
+pub fn due_now(app: &AppHandle) -> bool {
+    let Some(store) = app.try_state::<Store>() else { return false };
+    let Some(week) = monday_key_if_due(now()) else { return false };
+    let s = store.lock();
+    s.prefs().enabled && s.prefs().last_shown_week != week
+}
+
+/// `YYYY-MM-DD` of today when it is a Monday past 8:00 local time.
+fn monday_key_if_due(epoch: i64) -> Option<String> {
+    let t = epoch as libc::time_t;
+    let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+    if unsafe { libc::localtime_r(&t, &mut tm) }.is_null() {
+        return None;
+    }
+    (tm.tm_wday == 1 && tm.tm_hour >= 8)
+        .then(|| format!("{:04}-{:02}-{:02}", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday))
+}
+
 pub fn note_request(app: &AppHandle, request_id: &str, payload: &Value) {
     if let Some(store) = app.try_state::<Store>() {
         store.lock().note_request(request_id, payload);
@@ -1045,5 +1065,22 @@ mod tests {
         assert!(save_png(&[dir.clone()], "data:image/png;base64,aGVsbG8=", "").is_err());
         assert!(save_png(&[missing], png, "").is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_unlock_recap_is_for_monday_from_eight() {
+        // 2026-10-05 is a Monday. Built from local time so the zone doesn't matter.
+        let at = |day: i32, hour: i32| -> i64 {
+            let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+            tm.tm_year = 126;
+            tm.tm_mon = 9;
+            tm.tm_mday = day;
+            tm.tm_hour = hour;
+            tm.tm_isdst = -1;
+            unsafe { libc::mktime(&mut tm) as i64 }
+        };
+        assert_eq!(monday_key_if_due(at(5, 9)).as_deref(), Some("2026-10-05"));
+        assert_eq!(monday_key_if_due(at(5, 7)), None);
+        assert_eq!(monday_key_if_due(at(6, 9)), None);
     }
 }

@@ -69,6 +69,8 @@ interface HookPayload {
   term_editor?: string;
   /** StatusLine (the plan usage relay): Claude Code's 5-hour and weekly limits. */
   rate_limits?: unknown;
+  /** Set by the relay when "Always" has rules for Claude Code to remember. */
+  fedo_can_remember?: boolean;
 }
 
 const PROJECT_ALIASES: Record<string, string> = {
@@ -228,6 +230,29 @@ export function registerHookHandlers(island: Island) {
   // The last plan numbers seen survive a restart, as on the Mac.
   State.planUsage ??= restorePlanUsage(storedClaudePlanUsage());
   void onEvent<HookPayload>("hook", (payload) => handleHook(island, payload));
+  // Plan windows seen by Fedo's own `claude -p` runs (the chat), shaped like
+  // the status line's rate_limits.
+  void onEvent<unknown>("plan-usage", (limits) => {
+    const usage = parseClaudePlan(limits);
+    if (usage) setClaudePlanUsage(usage);
+  });
+}
+
+/** When each session's current turn began (UserPromptSubmit), for "took > N s". */
+const turnStarted = new Map<string, number>();
+
+/**
+ * "Tell me when done": a desktop notification when a turn ends while the
+ * island isn't showing it, if the turn took long enough to have looked away.
+ */
+function notifyIfLong(agentId: string, finalText: string, islandShowing: boolean) {
+  const started = turnStarted.get(agentId);
+  turnStarted.delete(agentId);
+  const s = State.settings;
+  if (!s.notifyOnDone || islandShowing || started == null) return;
+  if (Date.now() - started < s.notifyAfterSeconds * 1000) return;
+  const task = State.tasks.find((x) => x.id === agentId);
+  void Bridge.notifyDone(`${task?.name ?? "Claude Code"} is done`, finalText || "The turn finished.");
 }
 
 function handleHook(island: Island, payload: HookPayload) {
@@ -329,6 +354,7 @@ function handleHook(island: Island, payload: HookPayload) {
       ensurePill();
       supersedeStop();
       clearFinalLine(agentId);
+      turnStarted.set(agentId, Date.now());
       State.updateTask(agentId, "thinking");
       // The field is `prompt`; reading `message` meant this step was always blank.
       const asked = payload.prompt ?? payload.message;
@@ -399,8 +425,10 @@ function handleHook(island: Island, payload: HookPayload) {
       }
       Sound.play("finish");
       // A card waiting for an answer is never covered by another alert.
+      const showing = focused && !State.pendingApproval && State.mode === "expanded";
       if (focused && !State.pendingApproval) surface("finished", true);
       else State.setPillBadge(agentId, "finished");
+      notifyIfLong(agentId, finalText, showing);
       cancelStopTimer(agentId);
       stopTimers.set(
         agentId,
@@ -490,6 +518,7 @@ function handleHook(island: Island, payload: HookPayload) {
         tool,
         command: approvalTarget(tool, input),
         ...(questions ? { questions } : {}),
+        ...(payload.fedo_can_remember ? { canRemember: true } : {}),
       });
       // The relay's short ack window closes in 800 ms; everything below this
       // line is synchronous, so the card really is up by the time it lands.

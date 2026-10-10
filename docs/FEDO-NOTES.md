@@ -3,6 +3,111 @@
 A running log of decisions, things verified on this machine, and known
 limitations, per `FEDO.md` rule 7. Newest phase first.
 
+## Phase 3 — Claude Code core
+
+### What was built
+
+- **Chat → `claude -p`** (`app/src-tauri/src/chat.rs`). Each turn runs
+  `claude -p <prompt> --output-format stream-json --verbose
+  --include-partial-messages --append-system-prompt … --allowedTools
+  Read,Glob,Grep,WebFetch,WebSearch [--resume <id>] --add-dir <inbox>` in
+  `~`. The reply streams to the island as `chat-delta`; the session id from
+  the result is kept and follow-ups `--resume` it (so there is context);
+  "New chat" clears it and kills a running turn. A 5-minute watchdog ends a
+  hung turn. `FEDO_CHAT=1` is set so `fedo-hook` ignores the chat's own
+  session (otherwise it would show up as a Claude Code pill).
+  No write/exec tool is allowed: `claude -p` cannot ask, so anything else is
+  refused.
+- **Dropped file → chat**: the inbox path rides with the first message and
+  the inbox is `--add-dir`'d, so Claude Code reads it. The choose card now
+  shows Gmail / ZapZap / Phone as disabled stubs (Phase 6).
+- **Always** on permission cards (new). `fedo-hook` builds
+  `updatedPermissions` for an "always" answer from Claude Code's own
+  `permission_suggestions` (`addRules` only), else the exact command / file
+  path for this session; anything with `* ( )` or a newline isn't
+  remembered. The relay tells the island (`fedo_can_remember`) so the button
+  only appears when it will do something.
+- **Done notification**: when a turn ends while the island isn't showing it,
+  and it took ≥ `notifyAfterSeconds` (default 20, Settings → General), a
+  desktop notification goes out via `org.freedesktop.Notifications`
+  (`notify.rs`). The happy ghost and `finish` sound were already there.
+- **Jump to terminal on GNOME**: the extension now owns `org.fedo.Shell` with
+  `FocusWindow(au pids, s hint)`; the daemon tries it first on GNOME
+  (`linux_focus.rs`, `Method::Gnome`), then X11 as before. It walks the
+  session's remembered ancestors, picks the first that owns a normal window
+  (most-recently-used first, title containing the project folder preferred)
+  and activates it.
+- **Monday recap on first unlock** (`unlock.rs`): subscribes to
+  `org.gnome.ScreenSaver.ActiveChanged`; on unlock on a Monday ≥ 8:00 with
+  no recap shown this week it sends `recap-check`. The launch / agent-start
+  / island-wake triggers stay.
+- **Usage pill**: also fed by `rate_limit_event` lines of the chat's own
+  `claude -p` runs (`plan-usage` event), and shown when numbers exist even
+  without the status-line relay.
+
+### Investigated
+
+- **Plan usage sources**, in FEDO.md's order:
+  (a) coucou reads Claude Code's status line `rate_limits` through its
+  `--statusline` relay — that code is kept (`app/hook/src/statusline.rs`) and
+  needs the relay installed from Settings → Plan usage (diff + confirm).
+  (b) I could **not** capture a live status-line payload here: driving the
+  interactive TUI from a pty hit a confirmation dialog I couldn't pass, so
+  that `rate_limits` is present in this Claude Code (2.1.296) is unverified.
+  What *is* verified: `claude -p --output-format stream-json` emits a
+  `rate_limit_event` with `unifiedWindows.five_hour` / `seven_day`
+  (`utilization` 0–1, `resetsAt` epoch s) — real numbers on this machine
+  (23 % / 54 %), no API key. That is what the chat feeds the pill with.
+  (c) transcript parsing (`ccusage`-style) was not built; it gives tokens,
+  not a plan percentage.
+- **Ptyxis tabs**: `org.gnome.Ptyxis` exposes `app.focus-tab-by-uuid`, but a
+  tab's UUID is not in the shell's environment (`PTYXIS_PROFILE` is the
+  *profile*), nor anywhere readable, so session → tab can't be mapped.
+  Window-level focus is what works; tab-level is **not possible** on this
+  Ptyxis (50.1). On this machine the chain is claude → zsh → ptyxis-agent →
+  ptyxis, so the Ptyxis window's PID *is* an ancestor.
+- `claude -p` flags verified on 2.1.296: `--output-format stream-json`
+  needs `--verbose`; `--include-partial-messages` gives `text_delta`s;
+  `--resume <session-id>`, `--append-system-prompt`, `--allowedTools`,
+  `--add-dir`, `--model` all exist. A write request in `-p` with only the
+  read-only tools was refused (no file appeared).
+- `PermissionRequest` payload on this version carries
+  `permission_suggestions`; returning `updatedPermissions` with an `addRules`
+  entry made Claude Code skip the hook for the next matching command in the
+  same run (hook called once for two `touch`es).
+
+### Verified
+
+- `cargo test --workspace`: 163 pass (4 `--ignored`), `hook`: 36 pass,
+  `tsc` clean, `npm run build` ok.
+- Ignored-by-default live tests, run once: a real `claude` turn streams,
+  reports usage, and a `--resume` follow-up recalls the first turn
+  (`chat::tests::a_real_turn_…`, uses a few haiku tokens); a real banner is
+  accepted by gnome-shell (`notify::tests::a_banner_is_shown`).
+- The `org.fedo.Shell` call shape (`au`, `s` → `b`) against a GJS stub
+  exported the same way the extension does.
+- The daemon starts with the new threads and owns `org.fedo.Fedo`.
+
+### Not verified / known gaps
+
+- **Your `~/.claude/settings.json` still has coucou's hooks and status line**
+  (Phase 0 left them alone), so a real Claude Code session in Ptyxis does not
+  reach Fedo until you install Fedo's hooks (and the usage relay) from
+  Settings → Agents / Plan usage and confirm the diff. So the full acceptance
+  run (approve from the island → done notification → jump back → pill) has
+  **not** been done end to end; each piece was checked on its own as above.
+- **The extension still hasn't been loaded into a live GNOME Shell**, so
+  `FocusWindow` (Meta/`Main.activateWindow` calls) is unexercised; only its
+  D-Bus shape is. Same caveat as Phase 1 for everything in the extension.
+- Notification click doesn't jump to the session (no action handling yet).
+- Status-line `rate_limits` presence (see above); no transcript fallback.
+- The unlock trigger wasn't fired for real (today isn't a Monday); the
+  Monday/8:00 rule is unit-tested, the signal subscription is not.
+- "Sack": the drop animation is still the box/mailbox morph, not a sack.
+- Live session pill file +N −M / diff card are the inherited coucou code
+  (ticker steps with `+n −m`, tap opens the diff); not re-driven here.
+- `npm test` is the same already-failing suite from Phase 0.
+
 ## Phase 2 — the ghost and sounds
 
 ### What was built

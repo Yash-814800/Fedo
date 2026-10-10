@@ -19,6 +19,10 @@ pub struct Settings {
     /// How long the island stays hidden and idle before its webview is torn
     /// down to give the memory back (FEDO.md §3). 0 keeps it for good.
     pub webview_idle_seconds: f64,
+    /// A desktop notification when a session finishes while the island isn't
+    /// showing it, if the turn took at least `notify_after_seconds`.
+    pub notify_on_done: bool,
+    pub notify_after_seconds: f64,
     /// Hovering the island opens it all the way, and it folds again shortly
     /// after the pointer leaves (the Mac's "Open on hover"). Off by default.
     pub open_on_hover: bool,
@@ -80,6 +84,8 @@ impl Default for Settings {
             sound_volume: 0.12,
             auto_close_interval: 15.0,
             webview_idle_seconds: 60.0,
+            notify_on_done: true,
+            notify_after_seconds: 20.0,
             open_on_hover: false,
             absence_interval: 180.0,
             active_integrations: Vec::new(),
@@ -352,6 +358,8 @@ mod tests {
   "soundVolume": 0.5,
   "autoCloseInterval": 30.0,
   "webviewIdleSeconds": 120.0,
+  "notifyOnDone": false,
+  "notifyAfterSeconds": 5.0,
   "openOnHover": true,
   "absenceInterval": 60.0,
   "activeIntegrations": ["agent_antigravity"],
@@ -728,6 +736,8 @@ mod tests {
                 "soundVolume",
                 "autoCloseInterval",
                 "webviewIdleSeconds",
+                "notifyOnDone",
+                "notifyAfterSeconds",
                 "openOnHover",
                 "absenceInterval",
                 "activeIntegrations",

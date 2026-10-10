@@ -91,6 +91,8 @@ struct Event {
     name: String,
     /// For Claude Code's AskUserQuestion, the question as it was asked.
     question: Option<Value>,
+    /// For "Always": the `updatedPermissions` Claude Code is told to remember.
+    remember: Option<Value>,
 }
 
 fn main() {
@@ -100,6 +102,12 @@ fn main() {
     let args = args();
     let mut raw = Vec::new();
     let _ = std::io::stdin().read_to_end(&mut raw);
+    // Fedo's own `claude -p` runs (the chat) are not sessions to show: they
+    // set this, and get the same "no opinion" any unforwardable event gets.
+    if std::env::var_os("FEDO_CHAT").is_some() {
+        print(reply::stdout(&args.agent, normalize::event(&args.event), None, None));
+        std::process::exit(0);
+    }
     let env = |key: &str| std::env::var(key).ok();
     let cwd = std::env::current_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
 
@@ -127,7 +135,13 @@ fn main() {
     });
 
     let decision = rx.recv_timeout(budget).ok().flatten();
-    print(reply::stdout(&args.agent, &event.name, decision.as_deref(), event.question.as_ref()));
+    print(reply::stdout_with(
+        &args.agent,
+        &event.name,
+        decision.as_deref(),
+        event.question.as_ref(),
+        event.remember.as_ref(),
+    ));
     std::process::exit(0);
 }
 
@@ -171,6 +185,14 @@ fn prepare(raw: &[u8], args: &Args, env: &dyn Fn(&str) -> Option<String>, cwd: &
     let name = normalize::refine(normalize::event(&raw_event), map);
     map.insert("hook_event_name".into(), Value::String(name.clone()));
 
+    // Before the suggestions are dropped: what "Always" would remember. The
+    // island is told whether there is anything, so it only offers the button
+    // when it will do what it says.
+    let remember = if name == "PermissionRequest" { reply::remembered(map) } else { None };
+    if remember.is_some() {
+        map.insert("fedo_can_remember".into(), Value::Bool(true));
+    }
+
     for field in DROPPED_FIELDS {
         map.remove(*field);
     }
@@ -193,7 +215,7 @@ fn prepare(raw: &[u8], args: &Args, env: &dyn Fn(&str) -> Option<String>, cwd: &
 
     let mut line = payload.to_string();
     line.push('\n');
-    Some(Event { line, name, question })
+    Some(Event { line, name, question, remember })
 }
 
 /// Which terminal the session runs in. Unlike macOS, Fedo here accepts events

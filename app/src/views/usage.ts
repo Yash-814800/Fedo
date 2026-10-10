@@ -21,7 +21,7 @@ import { language, tl } from "../i18n/i18n";
 /** The Claude pill is in the header: overview, turned on, relay in. */
 export function claudePillVisible(): boolean {
   const s = State.settings;
-  return State.view === "overview" && s.showPlanInNotch && s.planRelayInstalled;
+  return State.view === "overview" && s.showPlanInNotch && (s.planRelayInstalled || State.planUsage != null);
 }
 
 /** A plan card is open and its pill is still there. */

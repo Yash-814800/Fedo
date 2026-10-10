@@ -48,6 +48,8 @@ export interface ApprovalInfo {
   command: string;
   /** Set when Claude Code is asking a question rather than for a permission. */
   questions?: AskedQuestion[];
+  /** The relay found something "Always" can remember for this request. */
+  canRemember?: boolean;
 }
 
 /** One question of an AskUserQuestion call. */
@@ -101,6 +103,8 @@ export interface Settings {
   autoCloseInterval: number;
   /** Seconds hidden and idle before the island's webview is destroyed (0: never). */
   webviewIdleSeconds: number;
+  notifyOnDone: boolean;
+  notifyAfterSeconds: number;
   /** Hovering the island opens it all the way (off: hovering only peeks). */
   openOnHover: boolean;
   absenceInterval: number;
@@ -142,6 +146,8 @@ export const DEFAULT_SETTINGS: Settings = {
   soundVolume: 0.12,
   autoCloseInterval: 15,
   webviewIdleSeconds: 60,
+  notifyOnDone: true,
+  notifyAfterSeconds: 20,
   openOnHover: false,
   absenceInterval: 180,
   activeIntegrations: [],

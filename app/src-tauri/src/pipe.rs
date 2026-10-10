@@ -348,7 +348,10 @@ pub fn decline(app: &AppHandle, request_id: &str) {
 /// it into Claude Code's JSON is fedo-hook's job.
 pub fn answer(app: &AppHandle, request_id: &str, decision: &str) {
     let word = match decision {
-        "allow" | "always" => "allow",
+        "allow" => "allow",
+        // The relay turns this into the rules Claude Code remembers; with none
+        // to remember it is a plain allow there.
+        "always" => "always",
         _ => "deny",
     };
     log::line(format!("decision id={request_id} {word}"));

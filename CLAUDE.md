@@ -36,6 +36,11 @@ limitations recorded as each phase lands.
   `app/src/ghost/debug-menu.ts` is the hidden debug menu (Shift+click the
   ghost in the open island, or Ctrl+Alt+Shift+D): every state, emote, move
   and sound.
+- `app/src-tauri/src/chat.rs` — the chat: one `claude -p` run per turn
+  (stream-json, `--resume` for follow-ups, read-only tools). `notify.rs` is
+  the desktop notification; `unlock.rs` the Monday-unlock recap trigger.
+  The extension's `org.fedo.Shell.FocusWindow` is how "open terminal" raises a
+  window on GNOME (`platform/linux_focus.rs`).
 - `app/scripts/make-sounds.mjs` — renders `app/sounds/*.wav` (Fedo's own,
   synthesised; rerun it after editing a sound). Users override any of them
   with `~/.config/fedo/sounds/<name>.wav`.

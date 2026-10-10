@@ -25,6 +25,18 @@ fn wants_json(agent: &str) -> bool {
 /// (`None`: nobody clicked) and, for Claude Code's AskUserQuestion, the
 /// question as it was asked.
 pub fn stdout(agent: &str, event: &str, decision: Option<&str>, question: Option<&Value>) -> Option<String> {
+    stdout_with(agent, event, decision, question, None)
+}
+
+/// `stdout`, plus the rules an "always" decision asks Claude Code to remember
+/// (see `remembered`).
+pub fn stdout_with(
+    agent: &str,
+    event: &str,
+    decision: Option<&str>,
+    question: Option<&Value>,
+    remember: Option<&Value>,
+) -> Option<String> {
     if event != "PermissionRequest" {
         // Antigravity reads "{}" on PreToolUse as a denial. "ask" keeps its own prompt
         // (and the user's Always Allow): Fedo never allows a tool by itself.
@@ -51,7 +63,7 @@ pub fn stdout(agent: &str, event: &str, decision: Option<&str>, question: Option
         }
         // Claude Code and Codex share the documented hookSpecificOutput. Only
         // Claude Code asks questions.
-        "" => decision.and_then(|d| decision_json(d, question)),
+        "" => decision.and_then(|d| decision_json_with(d, question, remember)),
         _ => decision.and_then(|d| decision_json(d, None)),
     }
 }
@@ -65,6 +77,57 @@ pub fn stdout(agent: &str, event: &str, decision: Option<&str>, question: Option
 /// with an `answers` map added. Nothing else of the input can be changed from
 /// the island, and no other tool's input can be changed at all.
 pub fn decision_json(decision: &str, question: Option<&Value>) -> Option<String> {
+    decision_json_with(decision, question, None)
+}
+
+/// What "Always" tells Claude Code to remember, from a PermissionRequest
+/// payload. Claude Code's own `permission_suggestions` of type `addRules` are
+/// used as they came (they carry its choice of where to keep them); without
+/// any, the exact command or file path of this request is allowed for the
+/// session — never a whole tool. Anything with a wildcard or parenthesis in it
+/// is not remembered at all, since it would mean more than it says.
+pub fn remembered(payload: &Map<String, Value>) -> Option<Value> {
+    let rules: Vec<Value> = payload
+        .get("permission_suggestions")
+        .and_then(Value::as_array)
+        .map(|s| s.iter().filter(|r| r.get("type").and_then(Value::as_str) == Some("addRules")).cloned().collect())
+        .unwrap_or_default();
+    if !rules.is_empty() {
+        return Some(Value::Array(rules));
+    }
+    let tool = payload.get("tool_name").and_then(Value::as_str)?;
+    let input = payload.get("tool_input")?;
+    let key = match tool {
+        "Bash" => "command",
+        "Edit" | "MultiEdit" | "Write" | "Read" | "NotebookEdit" => "file_path",
+        _ => return None,
+    };
+    let content = input.get(key).and_then(Value::as_str)?.trim();
+    if content.is_empty() || content.len() > 1000 || content.contains(['*', '(', ')', '\n']) {
+        return None;
+    }
+    Some(json!([{
+        "type": "addRules",
+        "rules": [{ "toolName": tool, "ruleContent": content }],
+        "behavior": "allow",
+        "destination": "session",
+    }]))
+}
+
+pub fn decision_json_with(decision: &str, question: Option<&Value>, remember: Option<&Value>) -> Option<String> {
+    if decision.trim() == "always" {
+        if let Some(rules) = remember {
+            return Some(
+                json!({
+                    "hookSpecificOutput": {
+                        "hookEventName": "PermissionRequest",
+                        "decision": { "behavior": "allow", "updatedPermissions": rules },
+                    }
+                })
+                .to_string(),
+            );
+        }
+    }
     if decision.trim_start().starts_with('{') {
         let reply = serde_json::from_str::<Value>(decision).ok()?;
         let answers = reply.get("answers")?.as_object()?;
@@ -85,8 +148,7 @@ pub fn decision_json(decision: &str, question: Option<&Value>) -> Option<String>
         );
     }
     let behavior = match decision.trim() {
-        // "always" still answers a plain allow; remembering it is the island's
-        // business, not the agent's.
+        // "always" with nothing to remember is the plain allow it was.
         "allow" | "always" => r#"{"behavior":"allow"}"#.to_string(),
         "deny" => r#"{"behavior":"deny","message":"Denied from Fedo"}"#.to_string(),
         _ => return None,
@@ -276,5 +338,41 @@ mod tests {
         assert!(!ok(r#"{"answers":{"Which one?":"A","Extras?":"Tests"}}"#));
         assert!(!ok(r#"{"answers":{"Which one?":"A","Extras?":[]}}"#));
         assert!(!ok(r#"{"answers":{"Which one?":"A","Extras?":["Tests","Tests"]}}"#));
+    }
+
+    #[test]
+    fn always_asks_claude_code_to_remember_and_plain_allow_does_not() {
+        let payload = json!({
+            "tool_name": "Bash",
+            "tool_input": { "command": "npm test" },
+        });
+        let rules = remembered(payload.as_object().unwrap()).unwrap();
+        assert_eq!(rules[0]["rules"][0]["ruleContent"], "npm test");
+        assert_eq!(rules[0]["destination"], "session");
+        let out = stdout_with("", "PermissionRequest", Some("always"), None, Some(&rules)).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["hookSpecificOutput"]["decision"]["behavior"], "allow");
+        assert_eq!(v["hookSpecificOutput"]["decision"]["updatedPermissions"][0]["behavior"], "allow");
+        let plain = stdout_with("", "PermissionRequest", Some("allow"), None, Some(&rules)).unwrap();
+        assert!(!plain.contains("updatedPermissions"));
+    }
+
+    #[test]
+    fn claude_codes_own_rule_suggestions_win_and_wildcards_are_not_remembered() {
+        let with = json!({
+            "tool_name": "Bash", "tool_input": { "command": "git status" },
+            "permission_suggestions": [
+                { "type": "addDirectories", "directories": ["/x"], "destination": "session" },
+                { "type": "addRules", "rules": [{ "toolName": "Bash", "ruleContent": "git status:*" }],
+                  "behavior": "allow", "destination": "localSettings" }
+            ]
+        });
+        let r = remembered(with.as_object().unwrap()).unwrap();
+        assert_eq!(r.as_array().unwrap().len(), 1);
+        assert_eq!(r[0]["destination"], "localSettings");
+        let glob = json!({ "tool_name": "Bash", "tool_input": { "command": "rm -rf build/*" } });
+        assert!(remembered(glob.as_object().unwrap()).is_none());
+        let other = json!({ "tool_name": "WebFetch", "tool_input": { "url": "https://x" } });
+        assert!(remembered(other.as_object().unwrap()).is_none());
     }
 }
