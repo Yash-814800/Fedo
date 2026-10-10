@@ -34,5 +34,7 @@ gtk = "0.18"
 # this fork (FEDO.md §0), so unlike the upstream project this no longer also backs
 # a keyring crate's Secret Service storage.
 dbus = "0.9.12"
+# Serves org.fedo.Fedo on the session bus (dbus_service.rs), on the same libdbus.
+dbus-crossroads = "0.5"
 # EWMH on X11 for "Open terminal", already in the tree (global-hotkey).
 x11rb = { version = "0.13", default-features = false }

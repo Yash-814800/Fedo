@@ -1,0 +1,8 @@
+{
+  "uuid": "fedo@yash",
+  "name": "Fedo",
+  "description": "A ghost in the top bar that opens Fedo's island. Talks to the fedo daemon over org.fedo.Fedo on the session bus; places and pins the island window.",
+  "shell-version": ["50"],
+  "url": "https://github.com/Yash-814800/fedo",
+  "version": 1
+}

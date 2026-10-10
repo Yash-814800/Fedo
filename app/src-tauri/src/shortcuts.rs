@@ -34,10 +34,9 @@ use std::str::FromStr;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcut, Modifiers, Shortcut, ShortcutState};
 
-use crate::island::WINDOW_LABEL;
 
 /// One global action, as on the Mac (`ShortcutAction`). The ids are the Mac's
 /// raw values and are stored in settings.json: never rename one.
@@ -301,7 +300,7 @@ pub fn from_args(args: &[String]) -> Option<&'static str> {
 // ── Registration ──────────────────────────────────────────────────────────────
 
 /// The plugin, with every press routed through `dispatch`.
-pub fn plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
+pub fn plugin() -> tauri::plugin::TauriPlugin<tauri::Wry> {
     tauri_plugin_global_shortcut::Builder::new()
         .with_handler(|app, shortcut, event| {
             if event.state != ShortcutState::Pressed {
@@ -317,14 +316,15 @@ pub fn plugin<R: Runtime>() -> tauri::plugin::TauriPlugin<R> {
 }
 
 /// Hands an action to the island.
-pub fn dispatch<R: Runtime>(app: &AppHandle<R>, action: &str) {
+pub fn dispatch(app: &AppHandle, action: &str) {
     crate::log::line(format!("shortcut {action}"));
-    let _ = app.emit_to(WINDOW_LABEL, "shortcut", action.to_string());
+    // A shortcut works with the island torn down: it is built for it.
+    crate::island::emit(app, "shortcut", action.to_string());
 }
 
 /// Unregisters everything Fedo holds.
-fn release<R: Runtime>(app: &AppHandle<R>) {
-    if let Some(gs) = app.try_state::<GlobalShortcut<R>>() {
+fn release(app: &AppHandle) {
+    if let Some(gs) = app.try_state::<GlobalShortcut<tauri::Wry>>() {
         if let Err(err) = gs.unregister_all() {
             crate::log::line(format!("shortcuts: unregister failed: {err}"));
         }
@@ -337,7 +337,7 @@ fn release<R: Runtime>(app: &AppHandle<R>) {
 /// Registers the shortcuts in `stored` in place of the current ones, and
 /// tells the settings window how each one went. Never fails: a shortcut that
 /// can't be had is reported, not fatal.
-pub fn apply<R: Runtime>(app: &AppHandle<R>, stored: &Bindings) {
+pub fn apply(app: &AppHandle, stored: &Bindings) {
     release(app);
     let blocked = crate::platform::global_shortcuts_blocked();
     let plan = plan(stored, typed_character);
@@ -348,7 +348,7 @@ pub fn apply<R: Runtime>(app: &AppHandle<R>, stored: &Bindings) {
     if blocked == Some("wayland") && wayland::bind(app, stored, &plan) {
         return;
     }
-    let gs = app.try_state::<GlobalShortcut<R>>();
+    let gs = app.try_state::<GlobalShortcut<tauri::Wry>>();
 
     let mut by_id = HashMap::new();
     let mut report = Vec::new();
@@ -390,13 +390,13 @@ pub fn apply<R: Runtime>(app: &AppHandle<R>, stored: &Bindings) {
 /// Lets go of every shortcut while a new one is being recorded in Settings,
 /// so pressing a combination Fedo already holds records it instead of
 /// running it.
-pub fn suspend<R: Runtime>(app: &AppHandle<R>) {
+pub fn suspend(app: &AppHandle) {
     release(app);
     #[cfg(target_os = "linux")]
     wayland::release(app);
 }
 
-pub fn status<R: Runtime>(app: &AppHandle<R>) -> Report {
+pub fn status(app: &AppHandle) -> Report {
     let registry = app.try_state::<Registry>();
     let actions = registry.as_ref().map(|r| r.report.lock().unwrap().clone()).unwrap_or_default();
     let portal = registry.as_ref().and_then(|r| *r.portal.lock().unwrap());
@@ -454,8 +454,8 @@ mod wayland {
 
     /// Hands the planned shortcuts to the desktop. False when there is no
     /// portal to hand them to; `apply` then carries on as before.
-    pub fn bind<R: Runtime>(
-        app: &AppHandle<R>,
+    pub fn bind(
+        app: &AppHandle,
         stored: &Bindings,
         plan: &[(&'static ActionDef, Result<Shortcut, ActionStatus>)],
     ) -> bool {
@@ -504,7 +504,7 @@ mod wayland {
 
     /// Gives the shortcuts back to the desktop while Settings records a new
     /// one; the next `apply` binds them again.
-    pub fn release<R: Runtime>(app: &AppHandle<R>) {
+    pub fn release(app: &AppHandle) {
         let Some(registry) = app.try_state::<Registry>() else { return };
         let mut link = registry.wayland.lock().unwrap();
         if let Link::Running { handle, gen } = &mut *link {
@@ -514,7 +514,7 @@ mod wayland {
     }
 
     /// What the portal thread says. Runs on that thread.
-    fn on_event<R: Runtime>(app: &AppHandle<R>, event: Event) {
+    fn on_event(app: &AppHandle, event: Event) {
         let Some(registry) = app.try_state::<Registry>() else { return };
         if let Event::Activated(id) = &event {
             if let Some(def) = find(id).filter(|d| d.ported) {

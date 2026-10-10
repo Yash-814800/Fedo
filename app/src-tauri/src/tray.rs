@@ -5,10 +5,9 @@
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, Emitter, Manager, Wry};
+use tauri::{AppHandle, Manager, Wry};
 
 use crate::i18n::{n_, t};
-use crate::island::WINDOW_LABEL;
 
 /// The menu's items, id and English label, in order. The labels are shown in
 /// the interface language (i18n.rs) and follow it when it changes.
@@ -42,7 +41,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<()> {
             "quit" => app.exit(0),
             "settings" => crate::show_settings_window(app),
             id => {
-                let _ = app.emit_to(WINDOW_LABEL, "tray", id.to_string());
+                crate::island::emit(app, "tray", id.to_string());
             }
         });
 

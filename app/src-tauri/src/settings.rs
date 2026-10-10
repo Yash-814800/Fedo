@@ -16,6 +16,9 @@ pub struct Settings {
     pub sound_enabled: bool,
     pub sound_volume: f64,
     pub auto_close_interval: f64,
+    /// How long the island stays hidden and idle before its webview is torn
+    /// down to give the memory back (FEDO.md §3). 0 keeps it for good.
+    pub webview_idle_seconds: f64,
     /// Hovering the island opens it all the way, and it folds again shortly
     /// after the pointer leaves (the Mac's "Open on hover"). Off by default.
     pub open_on_hover: bool,
@@ -76,6 +79,7 @@ impl Default for Settings {
             sound_enabled: true,
             sound_volume: 0.12,
             auto_close_interval: 15.0,
+            webview_idle_seconds: 60.0,
             open_on_hover: false,
             absence_interval: 180.0,
             active_integrations: Vec::new(),
@@ -347,6 +351,7 @@ mod tests {
   "soundEnabled": false,
   "soundVolume": 0.5,
   "autoCloseInterval": 30.0,
+  "webviewIdleSeconds": 120.0,
   "openOnHover": true,
   "absenceInterval": 60.0,
   "activeIntegrations": ["agent_antigravity"],
@@ -722,6 +727,7 @@ mod tests {
                 "soundEnabled",
                 "soundVolume",
                 "autoCloseInterval",
+                "webviewIdleSeconds",
                 "openOnHover",
                 "absenceInterval",
                 "activeIntegrations",

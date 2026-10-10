@@ -480,6 +480,17 @@ function generalSection(): HTMLElement {
     void save();
   });
 
+  const idleFree = h("input", {
+    type: "number", min: "0", max: "3600", step: "10",
+    value: String(Math.round(settings.webviewIdleSeconds)),
+    style: "width:72px",
+  }) as HTMLInputElement;
+  idleFree.addEventListener("change", () => {
+    settings.webviewIdleSeconds = Math.max(0, Math.min(3600, Number(idleFree.value) || 0));
+    idleFree.value = String(settings.webviewIdleSeconds);
+    void save();
+  });
+
   const screen = h("select", {}) as HTMLSelectElement;
   screen.append(
     h("option", { value: "primary", text: t("Main display") }),
@@ -526,6 +537,11 @@ function generalSection(): HTMLElement {
       h("label", { text: t("Auto-close") }),
       autoClose,
       h("span", { class: "hint", text: t("seconds after you leave the island") }),
+    ),
+    h("div", { class: "row" },
+      h("label", { text: t("Free memory after") }),
+      idleFree,
+      h("span", { class: "hint", text: t("seconds hidden and idle (0 keeps the island loaded)") }),
     ),
     h("div", { class: "row" },
       h("label", { text: t("Island lives on") }),

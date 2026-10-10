@@ -26,13 +26,12 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio::sync::mpsc;
 
-use crate::island::WINDOW_LABEL;
 use crate::log;
 use crate::session_window;
 
@@ -43,6 +42,10 @@ const DECISION_TIMEOUT: Duration = Duration::from_secs(108);
 /// simply not listening would leave Claude Code staring at a prompt nobody can
 /// see for nearly two minutes.
 const ACK_TIMEOUT: Duration = Duration::from_millis(800);
+/// The same, when the island's webview was torn down for being idle and has to
+/// be built (and its page loaded) before it can answer. Still bounded: Claude
+/// Code falls back to the terminal after this at the latest.
+const COLD_ACK_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_PAYLOAD: usize = 1 << 20;
 
 /// What the island can say about a permission request.
@@ -221,7 +224,7 @@ async fn handle(app: AppHandle, mut pipe: impl Relay) {
         if event != "StatusLine" {
             log::line(format!("hook {event}"));
         }
-        let _ = app.emit_to(WINDOW_LABEL, "hook", payload);
+        crate::island::emit(&app, "hook", payload);
         pipe.finish();
         return;
     }
@@ -235,9 +238,11 @@ async fn handle(app: AppHandle, mut pipe: impl Relay) {
     crate::recap::note_request(&app, &id, &payload);
     payload["request_id"] = json!(id);
     log::line(format!("hook PermissionRequest id={id}"));
-    let _ = app.emit_to(WINDOW_LABEL, "hook", payload);
+    // A torn-down island has to be built before the card can be acknowledged.
+    let ack = if crate::island::is_loaded(&app) { ACK_TIMEOUT } else { COLD_ACK_TIMEOUT };
+    crate::island::emit(&app, "hook", payload);
 
-    let decision = wait_for_decision(&id, &mut rx).await;
+    let decision = wait_for_decision(&id, &mut rx, ack).await;
     app.state::<Pending>().0.lock().unwrap().remove(&id);
 
     // No decision: say nothing at all. fedo-hook then writes nothing to stdout
@@ -274,8 +279,8 @@ fn note_session_window(pipe: &impl Relay, payload: &Value, event: &str) {
 }
 
 /// Two waits: a short one for "the card is up", then the long one for a human.
-async fn wait_for_decision(id: &str, rx: &mut mpsc::Receiver<Reply>) -> Option<String> {
-    match tokio::time::timeout(ACK_TIMEOUT, rx.recv()).await {
+async fn wait_for_decision(id: &str, rx: &mut mpsc::Receiver<Reply>, ack: Duration) -> Option<String> {
+    match tokio::time::timeout(ack, rx.recv()).await {
         Ok(Some(Reply::Ack)) => {}
         // A click that beats the ack is still a click.
         Ok(Some(Reply::Decision(d))) => {

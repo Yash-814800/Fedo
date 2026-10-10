@@ -4,6 +4,7 @@ mod agent_hooks;
 mod agents;
 mod chat;
 mod config_file;
+mod dbus_service;
 mod desktop;
 mod files;
 mod hooks;
@@ -22,6 +23,8 @@ mod settings;
 mod shortcuts;
 mod sounds;
 mod spotify;
+#[cfg(target_os = "linux")]
+mod stats;
 mod tray;
 
 use std::process::Command;
@@ -108,6 +111,7 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
     if i18n::set_picked(&settings.language) {
         language_changed(&app);
     }
+    dbus_service::report_muted(&app, !settings.sound_enabled);
     // Keep the other window in step (island ⇄ settings window).
     let _ = app.emit("settings-changed", settings);
 }
@@ -121,6 +125,24 @@ fn set_system_languages(app: AppHandle, languages: Vec<String>) {
     }
 }
 
+/// The tray/extension's "Mute sounds": flips the one setting and tells the
+/// island window, which plays the sounds.
+fn set_sound_enabled(app: &AppHandle, enabled: bool) {
+    let shared = app.state::<Shared>();
+    let updated = {
+        let mut current = shared.settings.lock().unwrap();
+        if current.sound_enabled == enabled {
+            return;
+        }
+        current.sound_enabled = enabled;
+        if let Err(err) = settings::save(&current) {
+            log::line(format!("could not save settings: {err}"));
+        }
+        current.clone()
+    };
+    let _ = app.emit("settings-changed", updated);
+}
+
 /// What Rust labels itself follows the new language: the tray menu and the
 /// settings window's title. The webviews switch on their own.
 fn language_changed(app: &AppHandle) {
@@ -128,6 +150,30 @@ fn language_changed(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("settings") {
         let _ = window.set_title(&i18n::t("Settings — Fedo"));
     }
+}
+
+/// The island page reports what the top-bar icon should show (`state`: idle /
+/// working / needs-you) and how much of the island is out (`visibility`:
+/// hidden / peek / open). Both go out on D-Bus for the extension.
+#[tauri::command]
+fn report_state(app: AppHandle, state: String, visibility: String) {
+    let state = match state.as_str() {
+        "working" | "needs-you" => state,
+        _ => "idle".to_string(),
+    };
+    let visibility = match visibility.as_str() {
+        "peek" | "open" => visibility,
+        _ => "hidden".to_string(),
+    };
+    island::note_activity(&app, &state, &visibility);
+    dbus_service::report(&app, &state, &visibility);
+}
+
+/// The island page has registered all its listeners and calls this once, last
+/// thing in its boot: queued events are delivered now (island.rs).
+#[tauri::command]
+fn island_ready(app: AppHandle) {
+    island::page_ready(&app);
 }
 
 /// Hidden island → shrink the window to the invisible wake strip and park the
@@ -485,52 +531,60 @@ fn shortcuts_suspend(app: AppHandle, shared: State<Shared>, suspended: bool) {
 /// error anywhere.
 pub(crate) const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --autoplay-policy=no-user-gesture-required";
 
-/// In a dev build the pages are served by Vite, so the second window needs the
-/// absolute dev URL; a bundled build resolves it inside the app bundle.
-fn settings_page_url(app: &AppHandle) -> WebviewUrl {
+/// In a dev build the pages are served by Vite, so a window created in code
+/// needs the absolute dev URL; a bundled build resolves it inside the app bundle.
+pub(crate) fn page_url(app: &AppHandle, page: &str) -> WebviewUrl {
     #[cfg(dev)]
     if let Some(mut base) = app.config().build.dev_url.clone() {
-        base.set_path("/settings.html");
+        base.set_path(&format!("/{page}"));
         return WebviewUrl::External(base);
     }
     let _ = app;
-    WebviewUrl::App("settings.html".into())
+    WebviewUrl::App(page.into())
 }
 
-/// The settings window is created hidden at launch and only ever shown and
-/// hidden afterwards. A WebView2 window created later — on the main thread or
-/// not — silently comes up blank in this app, so the window that works is the
-/// one that exists before the island's webview does.
-fn create_settings_window(app: &AppHandle) {
-    let url = settings_page_url(app);
-    match WebviewWindowBuilder::new(app, "settings", url)
+/// The settings window is built when it is asked for and destroyed when it is
+/// closed, so it costs nothing in between (FEDO.md §3).
+fn build_settings_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
+    match WebviewWindowBuilder::new(app, "settings", page_url(app, "settings.html"))
         .additional_browser_args(BROWSER_ARGS)
         .title(i18n::t("Settings — Fedo"))
         .inner_size(560.0, 680.0)
         .min_inner_size(460.0, 480.0)
         .resizable(true)
-        .visible(false)
         .center()
         .build()
     {
         Ok(win) => {
-            // Closing it must only hide it, or it could never be reopened.
-            let hidden = win.clone();
+            let handle = app.clone();
             win.on_window_event(move |event| {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    api.prevent_close();
-                    let _ = hidden.hide();
+                if matches!(event, tauri::WindowEvent::Destroyed) {
+                    island::reap_soon(&handle);
                 }
             });
+            Some(win)
         }
-        Err(err) => log::line(format!("settings window failed: {err}")),
+        Err(err) => {
+            log::line(format!("settings window failed: {err}"));
+            None
+        }
     }
 }
 
 pub fn show_settings_window(app: &AppHandle) {
-    let Some(win) = app.get_webview_window("settings") else {
-        log::line("settings window missing");
-        return;
+    let win = match app.get_webview_window("settings") {
+        Some(w) => w,
+        None => {
+            let handle = app.clone();
+            // Window builders belong on the main thread; the tray, the D-Bus
+            // thread and commands all arrive here from somewhere else.
+            let _ = app.run_on_main_thread(move || {
+                if let Some(w) = build_settings_window(&handle) {
+                    let _ = w.set_focus();
+                }
+            });
+            return;
+        }
     };
     let _ = win.unminimize();
     let _ = win.show();
@@ -540,6 +594,17 @@ pub fn show_settings_window(app: &AppHandle) {
 #[tauri::command]
 fn open_settings_window(app: AppHandle) {
     show_settings_window(&app);
+}
+
+/// `fedo stats`: prints what the running daemon costs and returns the exit code.
+pub fn stats() -> i32 {
+    #[cfg(target_os = "linux")]
+    return stats::run();
+    #[cfg(not(target_os = "linux"))]
+    {
+        eprintln!("fedo stats reads /proc and is Linux only");
+        1
+    }
 }
 
 pub fn run() {
@@ -554,9 +619,7 @@ pub fn run() {
             // settings run where we can't listen for keys ourselves (Wayland).
             match shortcuts::from_args(&argv) {
                 Some(action) => shortcuts::dispatch(app, action),
-                None => {
-                    let _ = app.emit_to(island::WINDOW_LABEL, "tray", "open".to_string());
-                }
+                None => island::request(app, "show", None),
             }
         }))
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None));
@@ -571,6 +634,7 @@ pub fn run() {
             gate: gate.clone(),
         })
         .manage(Pending::default())
+        .manage(island::Lifecycle::default())
         .manage(Chat::default())
         .manage(shortcuts::Registry::default())
         .manage(recap::load())
@@ -579,6 +643,8 @@ pub fn run() {
             save_settings,
             set_system_languages,
             set_collapsed,
+            report_state,
+            island_ready,
             set_island_rect,
             focus_window,
             reposition,
@@ -640,41 +706,40 @@ pub fn run() {
         .setup(move |app| {
             let handle = app.handle().clone();
             tray::build(&handle)?;
-            // Before the island: see create_settings_window.
-            create_settings_window(&handle);
             // Same rule for the ghost's desktop window.
             desktop::setup(&handle);
 
-            if let Some(win) = island::window(&handle) {
-                // Where Tauri takes the drop itself (Linux), its paths are the
-                // ones ingest_file may copy (files.rs).
-                win.on_window_event(|event| {
-                    if let tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) = event {
-                        files::allow_dropped(paths.iter().map(|p| p.to_string_lossy().to_string()));
-                    }
-                });
-                platform::make_non_activating(&win);
-                island::apply_geometry(&handle, &loaded.screen, false);
-                let _ = win.show();
-            }
-            gate.collapsed.store(false, Ordering::Relaxed);
-            // Nothing drawn yet, so nothing takes the mouse until the page
-            // reports the island's shape.
-            if !platform::CURSOR_POLL {
-                island::refresh_click_through(&handle, &gate);
-            }
-            gate.set_active(true);
+            // No island window yet: it is built by the first thing that needs it
+            // (island.rs), and the icon in the top bar is the way to ask.
             island::spawn_cursor_poll(handle.clone(), gate.clone());
 
             log::line(format!("--- Fedo {} started ---", env!("CARGO_PKG_VERSION")));
             hooks::ensure_hook_exe(&handle);
             pipe::start(handle.clone());
+            dbus_service::start(&handle);
             spotify::sync(&handle, &loaded.active_integrations);
             shortcuts::apply(&handle, &loaded.shortcuts);
+            // Startup is a burst of one-off work (GTK, the tray, the portal);
+            // let it finish, then drop what it left resident.
+            tauri::async_runtime::spawn(async {
+                tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+                island::settle_idle();
+            });
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Fedo");
+        .build(tauri::generate_context!())
+        .expect("error while building Fedo")
+        .run(|_app, event| {
+            // The daemon outlives its windows: the island's webview is torn
+            // down when idle and the settings window closes for good, and
+            // Tauri would otherwise exit with the last of them. An explicit
+            // quit (`app.exit(code)`) carries a code and still goes through.
+            if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
+                if code.is_none() {
+                    api.prevent_exit();
+                }
+            }
+        });
 }
 
 #[cfg(test)]

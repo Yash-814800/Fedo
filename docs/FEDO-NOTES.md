@@ -3,6 +3,148 @@
 A running log of decisions, things verified on this machine, and known
 limitations, per `FEDO.md` rule 7. Newest phase first.
 
+## Phase 1 — GNOME top-bar extension + island behavior
+
+### What was built
+
+- **`gnome-extension/`** (`fedo@yash`, GJS ESM, `shell-version: ["50"]`):
+  panel button with a symbolic ghost SVG and a state dot (offline / idle /
+  working / needs-you); left-click → `Toggle()`, right-click → menu
+  (Settings, Mute sounds, Pause voice, Quit Fedo). Hovering the icon for
+  350 ms opens the island. While the island is open it listens on the stage
+  and calls `Hide()` on an outside click or Escape (the event is always
+  propagated, so Escape in a terminal still reaches the terminal). It finds
+  the island's window and keeps it centred directly below the top bar, on
+  all workspaces. If the daemon is not on the bus, a click starts `fedo`
+  from `$PATH` / `~/.local/bin`.
+- **`install.sh`** symlinks the directory into
+  `~/.local/share/gnome-shell/extensions/`. It changes nothing else unless
+  told (`--enable`, `--link-bin PATH`); `--uninstall` undoes it.
+- **`org.fedo.Fedo`** on the session bus (`dbus_service.rs`, object
+  `/org/fedo/Fedo`): `Toggle()`, `Show(s view)`, `Hide()`,
+  `FocusSession(s id)`, plus `Quit()`; properties `State`
+  (`idle`/`working`/`needs-you`, the dot), `Visibility`
+  (`hidden`/`peek`/`open`) and `Muted` (read/write, persisted in
+  settings.json); signal `StateChanged(s)`, and standard
+  `PropertiesChanged`. Served on one thread blocked in poll(2) — no timers.
+- **`fedo stats`**: RSS, PSS and CPU % per process of the running daemon
+  (reads `/proc`, 1 s CPU sample).
+- **Island webview lifecycle** (`island.rs`): no island window at startup;
+  built by the first thing that needs it (a hook event, the icon, a
+  shortcut, a second `fedo` launch); destroyed after
+  `webviewIdleSeconds` (default 60, Settings → General → "Free memory
+  after", 0 = never) hidden **and** idle. Events that arrive while the page
+  loads are queued and delivered when the page calls `island_ready`.
+  Settings and the desktop-ghost window are on demand too and are destroyed
+  on close / when the ghost is back home. The daemon no longer exits with
+  its last window (`RunEvent::ExitRequested` is prevented unless an explicit
+  `exit(code)`).
+
+### Decisions
+
+- **Window placement: the existing XWayland Dock-window path, not a native
+  Wayland window.** The app already forces `GDK_BACKEND=x11` on GNOME
+  (`prefer_x11_on_gnome`): on Wayland GNOME ignores a client's requested
+  position and has no layer-shell. An X11 DOCK window can be positioned,
+  stays above normal windows and survives "show desktop". The island's
+  `WM_CLASS` is `Fedo` (not `fedo-island` as FEDO.md guessed); the extension
+  matches `WM_CLASS == "Fedo"` and window type DOCK, which tells it apart
+  from the Settings window.
+- **"Hover the top edge under the icon" is implemented as hovering the
+  icon.** The icon sits in the panel, which GNOME draws above windows, so
+  the island's own 6 px wake strip (top-centre of the screen, under the
+  panel) is not under the icon unless the icon happens to be centred. The
+  strip still exists for anything that reaches it.
+- **No launch greeting.** The window is built because something asked for
+  the island, so it comes up hidden and runs that request. Phase 2 can give
+  the ghost an entrance of its own.
+- **`emit_to` drops events when the island is torn down.** Everything that
+  must reach the island goes through `island::emit` (queues and builds).
+  Spotify state/artwork and recap checks deliberately stay on `emit_to`: a
+  hidden island must not be woken (or kept loaded) for a track change, and
+  the page asks Rust for the current Spotify state when it boots.
+- **Cold permission requests**: if the island has to be built first, the
+  island has 5 s (not 800 ms) to acknowledge the card. Claude Code is still
+  never blocked longer than that.
+- **WebKit leaves helper processes behind** (web + network process, ~300 MB)
+  after the last webview is destroyed — a cache-model change made no
+  difference. With no webview window left, the daemon sends SIGTERM to its
+  own `WebKit*` children; WebKit respawns them on the next window (verified:
+  44 ms to rebuild the window, 683 ms from a torn-down island to a visible
+  approval card).
+- `shortcuts.rs` was generic over the Tauri runtime; it is concrete (`Wry`)
+  now, since the island is.
+- A second `fedo` launch (single-instance) now means "show the island".
+
+### Measured (release build, this machine, RSS = VmRSS summed over fedo and its children)
+
+| State | RSS | PSS | CPU | FEDO.md §3 budget |
+|---|---|---|---|---|
+| Phase 0 build, idle (island + settings webviews alive) | 939 MB | — | ~0 % | — |
+| Idle, island never built (10 s after start) | **66.5 MB** | 26.0 MB | 0.0 % | ≤ 40 MB RSS — **not met** (PSS is) |
+| Island open | 502 MB | 272 MB | 0–9 % while animating | ≤ 200 MB — **not met** |
+| After first use, torn down | 166 MB | 109 MB | 0.0 % | ≤ 40 MB — **not met** |
+
+Why the budget is not met, honestly:
+
+- RSS counts every shared library page. GTK + WebKitGTK + the GPU stack
+  (libLLVM, NVIDIA/gallium drivers, loaded by EGL when the first webview
+  exists and never unloaded) are mapped file-backed pages shared with
+  gnome-shell and others; PSS divides them fairly. `MADV_PAGEOUT` and
+  `malloc_trim` are applied at idle but the kernel will not reclaim pages
+  other processes map.
+- A daemon that links GTK/WebKit cannot get under 40 MB RSS. The real fix is
+  architectural: a lean daemon (hook socket, D-Bus, scheduler — no GTK) that
+  starts the island as a separate short-lived process. That is a refactor of
+  everything that currently lives in the Tauri process (pipe, recap, spotify,
+  settings); it is not attempted in Phase 1. Recommend deciding on it before
+  Phase 3.
+- `WEBKIT_DISABLE_COMPOSITING_MODE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1`
+  brings the open island from 508 MB to 390 MB RSS (web process 257 →
+  144 MB). Not made the default: the visual result (transparency, the
+  island's animation) was not verified on screen.
+- Two sandbox helpers (`bwrap`, `glycin-image-rs`, ~10 MB RSS together) stay
+  alive after loading the tray icon; not reaped.
+- A session that is `working` or an unanswered approval keeps the island
+  loaded by design (not idle).
+
+### Verified on this machine
+
+- `busctl --user introspect` shows the interface; `Toggle`, `Show s
+  settings/overview`, `Hide`, `Show s bogus` (→ invalid argument),
+  `Quit`, `Muted` get/set all behave; a GJS client written like the
+  extension's (name watch, `Gio.DBusProxy`, `g-properties-changed`) saw
+  `State`/`Visibility`/`Muted` updates.
+- Open/close latency over D-Bus on a warm island: 13–14 ms until
+  `Visibility` flips (not a paint measurement); first open from a
+  never-built island 1.4–1.6 s (webview build + page boot).
+- Idle teardown fires at the configured 60 s and the process stays up;
+  `UserPromptSubmit` and `PermissionRequest` both wake a torn-down island
+  and the approval is acknowledged.
+- `cargo test -p fedo --lib`: 158 pass (the settings fixtures learned the
+  new field); `npx tsc --noEmit` clean. `npm test` is the same
+  already-failing suite recorded under Phase 0.
+
+### Not verified / known gaps
+
+- **The extension has not been loaded into a GNOME Shell.** This machine has
+  no `mutter-devkit` (needed for `gnome-shell --devkit` on 49+) and a new
+  extension is only seen by the live shell after logging out and in. Only its
+  JavaScript syntax and its D-Bus client behaviour (via the GJS probe above)
+  are checked. So the icon rendering, the dot, the menu, hover, outside-click
+  and window placement under the panel are **untested**.
+  To test safely first: `sudo dnf install mutter-devkit`, then
+  `cd gnome-extension && ./install.sh` and
+  `dbus-run-session -- gnome-shell --devkit`.
+- The icon is not tied to a systemd service or D-Bus activation yet (Phase
+  10): clicking it starts `fedo` from `$PATH`.
+- "Pause voice" is in the menu, disabled, until Phase 8; "Mute sounds" is
+  live but there are no sounds until Phase 2.
+- With the island torn down, finished-session cards and the session list are
+  gone; a running session reappears on its next hook event.
+- Unit tests for the D-Bus service itself (needs a private bus) are not
+  written; it was exercised live instead.
+
 ## Phase 0 — fork hygiene, rename, strip, build
 
 ### Machine, verified directly (not assumed)

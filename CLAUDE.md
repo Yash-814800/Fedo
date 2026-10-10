@@ -15,6 +15,16 @@ limitations recorded as each phase lands.
 - `app/` — the Tauri 2 app: Rust in `app/src-tauri/`, TypeScript in
   `app/src/`, the `fedo-hook` relay in `app/hook/`. `app/README.md` lists
   what differs from the coucou fork it came from.
+- `gnome-extension/` — the top-bar ghost (GJS, ESM, GNOME 50). It owns the
+  panel button, the state dot, outside-click/Esc closing and the island
+  window's placement under the top bar; everything else is the daemon's.
+  `install.sh` symlinks it into `~/.local/share/gnome-shell/extensions/`.
+- `app/src-tauri/src/dbus_service.rs` — `org.fedo.Fedo` on the session bus
+  (`Toggle`/`Show`/`Hide`/`FocusSession`, `State`/`Visibility`/`Muted`).
+  `island.rs` owns the island webview's lifecycle: built on demand, destroyed
+  after `webviewIdleSeconds` hidden and idle, events queued while it loads.
+  Anything that must reach the island goes through `island::emit`, not
+  `emit_to` — `emit_to` silently drops events when the webview is torn down.
 - `app/src/core/pills.ts` — single source of truth for every pill
   (workspace tools, agents, AI providers, services). Every pill ID,
   color, category and connection method lives here; IDs are stable
@@ -52,7 +62,8 @@ macOS app in this fork.
   (today: none that need configuring — Spotify is read locally over
   MPRIS/D-Bus).
 - Never block Claude Code or Antigravity: if the app doesn't answer, the
-  hook exits immediately.
+  hook exits immediately. A cold start of the island (webview torn down) gets
+  at most the 5 s `COLD_ACK_TIMEOUT` in `pipe.rs`.
 - Never overwrite `~/.claude/settings.json` or an agent's own config:
   dated backup, merge, show the diff, write only after the user confirms
   (`app/src-tauri/src/config_file.rs`, shared by every installer).

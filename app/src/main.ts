@@ -74,6 +74,35 @@ async function main() {
     }
   });
 
+  // The GNOME extension's icon (and `busctl`) through org.fedo.Fedo.
+  await onEvent<{ action: string; view: string | null }>("island-request", ({ action, view }) => {
+    const out = State.mode === "expanded";
+    if (action === "hide" || (action === "toggle" && out)) {
+      island.tuckAway();
+      return;
+    }
+    setPaused(false);
+    if (view === "settings") {
+      void Bridge.openSettingsWindow();
+    } else if (view === "mail" || view === "prompt" || view === "overview") {
+      island.alert(view);
+    } else if (!out) {
+      island.alert(State.defaultView());
+    }
+  });
+
+  // What the icon's dot and the extension's outside-click handling follow.
+  let reported = "";
+  State.subscribe(() => {
+    const working = State.tasks.some((t) => ["working", "thinking", "searching"].includes(t.state));
+    const activity = State.pendingApproval ? "needs-you" : working ? "working" : "idle";
+    const visibility = State.mode === "expanded" ? "open" : State.mode === "compact" ? "peek" : "hidden";
+    const key = `${activity}/${visibility}`;
+    if (key === reported) return;
+    reported = key;
+    void Bridge.reportState(activity, visibility);
+  });
+
   await onEvent<null>("screen-changed", () => void Bridge.reposition());
 
   // Settings → Reload sounds: read the sounds folder again, and let them hear it.
@@ -107,7 +136,14 @@ async function main() {
   island.onWake = checkRecap;
   await onEvent<null>("recap-check", checkRecap);
 
-  island.launch();
+  // The window is built because something asked for the island, so it comes up
+  // quiet and waits for that request (no launch greeting; Phase 2 may bring a
+  // ghost-native entrance). Outside Tauri there is nothing to wait for.
+  if (!boot) island.launch();
+  else island.parkHidden();
+  // Everything listens now: Rust may deliver what it held back while this
+  // page was loading (a hook event, a click on the top-bar icon).
+  await Bridge.islandReady();
 
   // In a plain browser there is no wake strip behind the cursor: make the whole
   // page wake the island so the visuals can be checked with `npm run dev`.

@@ -150,6 +150,21 @@ export class Island {
     this.fsm.forcePetit();
   }
 
+  /**
+   * Tucks the island away for good (the icon's second click, Hide() on D-Bus).
+   * A card still waiting for an answer is only folded: the request keeps
+   * waiting and the compact island stays so it can be reopened.
+   */
+  tuckAway() {
+    if (State.pendingApproval) {
+      if (State.mode === "expanded") this.foldApproval();
+      return;
+    }
+    State.isPinned = false;
+    this.fsm.pinned = false;
+    this.fsm.forceHidden();
+  }
+
   // ── DOM ─────────────────────────────────────────────────────────────────────
 
   private build() {
@@ -318,6 +333,14 @@ export class Island {
 
   launch() {
     this.fsm.launch();
+  }
+
+  /**
+   * A window built again after an idle teardown: no greeting, the island stays
+   * out of sight (and the window shrinks to the wake strip) until asked.
+   */
+  parkHidden() {
+    this.updateWindowCollapsed();
   }
 
   // ── Mode / view ─────────────────────────────────────────────────────────────

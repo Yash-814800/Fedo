@@ -269,6 +269,63 @@ pub fn open_claude_desktop() -> bool {
 }
 
 
+// ── WebKit helper processes ───────────────────────────────────────────────────
+
+/// Ends the WebKit helper processes (web, network) that are our children.
+///
+/// With no webview left WebKitGTK still keeps them: the web process for the
+/// view that was closed, and the network process for the life of the web
+/// context. That is ~300 MB resident doing nothing. They are only ever started
+/// again on demand, so for an app that tears its windows down to give memory
+/// back, asking them to exit is the way to actually get it back. Only call
+/// this with no webview window alive.
+pub fn reap_webkit_helpers() -> usize {
+    let me = std::process::id();
+    let mut ended = 0;
+    let Ok(dir) = std::fs::read_dir("/proc") else { return 0 };
+    for entry in dir.flatten() {
+        let Some(pid) = entry.file_name().to_str().and_then(|s| s.parse::<u32>().ok()) else { continue };
+        let Ok(stat) = std::fs::read_to_string(format!("/proc/{pid}/stat")) else { continue };
+        let (Some(open), Some(close)) = (stat.find('('), stat.rfind(')')) else { continue };
+        let comm = &stat[open + 1..close];
+        let ppid = stat[close + 2..].split_whitespace().nth(1).and_then(|v| v.parse::<u32>().ok());
+        // `comm` is cut to 15 characters: "WebKitWebProces", "WebKitNetworkPr".
+        if ppid == Some(me) && comm.starts_with("WebKit") {
+            if unsafe { libc::kill(pid as i32, libc::SIGTERM) } == 0 {
+                ended += 1;
+            }
+        }
+    }
+    ended
+}
+
+/// Asks the kernel to reclaim this process's read-only file-backed pages
+/// (libraries and the executable) that nothing is using right now.
+///
+/// While the island is torn down the daemon touches almost none of what GTK,
+/// WebKit and the GPU drivers mapped at startup or on the last window, yet those
+/// clean pages sit in its resident set. `MADV_PAGEOUT` drops them; whatever is
+/// needed again simply faults back in from the page cache. Pages another
+/// process also maps are left alone by the kernel. Best effort, no errors.
+pub fn page_out_idle() {
+    let Ok(maps) = std::fs::read_to_string("/proc/self/maps") else { return };
+    for line in maps.lines() {
+        let mut parts = line.split_whitespace();
+        let (Some(range), Some(perms)) = (parts.next(), parts.next()) else { continue };
+        // offset, dev, inode, then the path (absent for anonymous memory).
+        let Some(path) = parts.nth(3) else { continue };
+        let b = perms.as_bytes();
+        if !path.starts_with('/') || b.len() < 4 || b[1] == b'w' {
+            continue;
+        }
+        let Some((a, e)) = range.split_once('-') else { continue };
+        let (Ok(start), Ok(end)) = (usize::from_str_radix(a, 16), usize::from_str_radix(e, 16)) else { continue };
+        unsafe {
+            libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_PAGEOUT);
+        }
+    }
+}
+
 // ── Cursor ────────────────────────────────────────────────────────────────────
 
 /// Nothing polls the cursor here: the page reports it over the island, and the
@@ -428,13 +485,23 @@ thread_local! {
 /// to the page as `pointer-inside`, and leaving also emits the far-away cursor
 /// the page uses. While the island is hidden the timer is removed altogether
 /// (set_pointer_watch), so a hidden island costs nothing.
-static POINTER_WIN: std::sync::OnceLock<WebviewWindow> = std::sync::OnceLock::new();
+static POINTER_WIN: Mutex<Option<WebviewWindow>> = Mutex::new(None);
 static WATCH_WANTED: AtomicBool = AtomicBool::new(true);
 static WATCH_RUNNING: AtomicBool = AtomicBool::new(false);
 
 fn watch_pointer_leave(win: &WebviewWindow) {
-    let _ = POINTER_WIN.set(win.clone());
+    // The island's webview is torn down when idle and built again on demand
+    // (island.rs), so this is replaced on every creation.
+    *POINTER_WIN.lock().unwrap() = Some(win.clone());
     start_pointer_watch();
+}
+
+/// The island's window was destroyed: let go of it. The pointer timer ends on
+/// its next tick; a new window brings its own through `make_non_activating`.
+/// Main thread only.
+pub fn island_destroyed() {
+    *POINTER_WIN.lock().unwrap() = None;
+    ISLAND_GTK.with(|cell| *cell.borrow_mut() = None);
 }
 
 /// Starts or parks the pointer watch. Called with the island's collapsed state;
@@ -452,16 +519,17 @@ fn start_pointer_watch() {
         return;
     }
     use tauri::Emitter;
-    let Some(win) = POINTER_WIN.get().cloned() else {
+    if POINTER_WIN.lock().unwrap().is_none() {
         WATCH_RUNNING.store(false, Ordering::Relaxed);
         return;
-    };
+    }
     let inside = std::cell::Cell::new(false);
     gtk::glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
-        if !WATCH_WANTED.load(Ordering::Relaxed) {
+        let win = POINTER_WIN.lock().unwrap().clone();
+        let Some(win) = win.filter(|_| WATCH_WANTED.load(Ordering::Relaxed)) else {
             WATCH_RUNNING.store(false, Ordering::Relaxed);
             return gtk::glib::ControlFlow::Break;
-        }
+        };
         let now_inside = ISLAND_GTK
             .with(|cell| {
                 let gw = cell.borrow().clone()?;

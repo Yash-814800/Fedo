@@ -43,6 +43,19 @@ export const Bridge = {
   setCollapsed: (collapsed: boolean) => call<void>("set_collapsed", { collapsed }),
 
   /**
+   * Last thing the island page does at boot, once every listener is registered:
+   * Rust delivers what it queued while the webview was loading.
+   */
+  islandReady: () => call<void>("island_ready"),
+
+  /**
+   * What the top-bar icon shows (`state`: idle | working | needs-you) and how
+   * much of the island is out (`visibility`: hidden | peek | open). Rust puts
+   * both on D-Bus for the GNOME extension.
+   */
+  reportState: (state: string, visibility: string) => call<void>("report_state", { state, visibility }),
+
+  /**
    * Pushes the island shape in window coordinates. Rust flips click-through from
    * its own cursor poll, so the flag is never a frame behind a click.
    */
@@ -249,6 +262,8 @@ export interface DesktopInfo {
   mode: DesktopMode;
   /** He was on the desktop when the app last quit. */
   onDesktop: boolean;
+  /** He is out on the desktop right now. */
+  visible: boolean;
 }
 
 /** An event for one window only (island ⇄ desktop ghost). Never throws. */
@@ -340,6 +355,7 @@ async function callOrThrow<T>(cmd: string, args?: Record<string, unknown>): Prom
 export type BridgeEvent =
   | { name: "cursor"; payload: { x: number; y: number } }
   | { name: "tray"; payload: string }
+  | { name: "island-request"; payload: { action: "toggle" | "show" | "hide"; view: string | null } }
   | { name: "hook"; payload: Record<string, unknown> }
   | { name: "screen-changed"; payload: null };
 

@@ -5,12 +5,14 @@
 // centre of the main display inside a borderless, transparent, always-on-top
 // window that never takes focus.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, WebviewWindow};
+use tauri::{
+    AppHandle, Emitter, Manager, Monitor, PhysicalPosition, PhysicalSize, WebviewWindow, WebviewWindowBuilder,
+};
 
 use crate::platform::{self, cursor_physical, left_button_down};
 
@@ -99,6 +101,263 @@ impl PollGate {
     pub(crate) fn is_active(&self) -> bool {
         *self.active.lock().unwrap()
     }
+}
+
+#[derive(Serialize, Clone)]
+struct Request<'a> {
+    action: &'a str,
+    view: Option<String>,
+}
+
+/// Something the daemon's D-Bus interface (or the extension through it) asks of
+/// the island: `toggle`, `show` (with a view) or `hide`. The page decides what
+/// that means for its own state machine. Wakes the island if it was torn down.
+pub fn request(app: &AppHandle, action: &str, view: Option<String>) {
+    // Hiding something that is not there needs no webview.
+    if action == "hide" && window(app).is_none() {
+        return;
+    }
+    emit(app, "island-request", Request { action, view });
+}
+
+// ── Window lifecycle (FEDO.md §3) ─────────────────────────────────────────────
+//
+// The island's webview is the heavy part of Fedo (a WebKit process, ~100 MB).
+// It is not created at startup: the first thing that needs the island builds
+// it, and it is destroyed again after `webview_idle_seconds` hidden and idle.
+// What arrived in between waits in `Lifecycle::queue` until the page says it
+// is listening (`island_ready`).
+
+#[derive(Default)]
+pub struct Lifecycle {
+    /// The page has registered its listeners and takes events.
+    ready: AtomicBool,
+    queue: Mutex<Vec<(String, serde_json::Value)>>,
+    /// A build is already scheduled on the main thread.
+    creating: AtomicBool,
+    /// Bumped by anything that moves the destroy deadline.
+    idle_epoch: AtomicU64,
+}
+
+/// Most events kept while the page loads: a runaway producer must not grow
+/// the queue without bound, and anything older than this is stale anyway.
+const QUEUE_CAP: usize = 64;
+
+/// Sends `event` to the island, creating the island first if it is not there.
+/// Delivered once the page reports ready, in order.
+pub fn emit<S: Serialize>(app: &AppHandle, event: &str, payload: S) {
+    let Ok(value) = serde_json::to_value(payload) else { return };
+    let life = app.state::<Lifecycle>();
+    if life.ready.load(Ordering::Acquire) && window(app).is_some() {
+        let _ = app.emit_to(WINDOW_LABEL, event, value);
+        return;
+    }
+    {
+        let mut q = life.queue.lock().unwrap();
+        if q.len() >= QUEUE_CAP {
+            q.remove(0);
+        }
+        q.push((event.to_string(), value));
+    }
+    ensure_window(app);
+}
+
+/// The island's page is up and listening (a permission request can be
+/// acknowledged within the short wait, rather than the cold one).
+pub fn is_loaded(app: &AppHandle) -> bool {
+    window(app).is_some() && app.state::<Lifecycle>().ready.load(Ordering::Acquire)
+}
+
+/// Builds the island window unless it exists or is being built.
+pub fn ensure_window(app: &AppHandle) {
+    if window(app).is_some() {
+        return;
+    }
+    let life = app.state::<Lifecycle>();
+    if life.creating.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    let handle = app.clone();
+    if app.run_on_main_thread(move || build_window(&handle)).is_err() {
+        life.creating.store(false, Ordering::Release);
+    }
+}
+
+fn build_window(app: &AppHandle) {
+    let life = app.state::<Lifecycle>();
+    if window(app).is_some() {
+        life.creating.store(false, Ordering::Release);
+        return;
+    }
+    let started = std::time::Instant::now();
+    let mut builder = WebviewWindowBuilder::new(app, WINDOW_LABEL, crate::page_url(app, "index.html"))
+        .additional_browser_args(crate::BROWSER_ARGS)
+        .title("Fedo")
+        .inner_size(STRIP_W, STRIP_H)
+        .resizable(false)
+        .decorations(false)
+        .transparent(true)
+        .shadow(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .focused(false)
+        .visible(false)
+        .center()
+        .maximizable(false)
+        .minimizable(false)
+        .closable(false);
+    #[cfg(target_os = "linux")]
+    {
+        builder = builder.focusable(false).visible_on_all_workspaces(true);
+    }
+    let result = builder.build();
+    life.creating.store(false, Ordering::Release);
+    let win = match result {
+        Ok(w) => w,
+        Err(err) => {
+            crate::log::line(format!("island window failed: {err}"));
+            return;
+        }
+    };
+
+    life.ready.store(false, Ordering::Release);
+    let handle = app.clone();
+    win.on_window_event(move |event| match event {
+        // Where Tauri takes the drop itself (Linux), its paths are the ones
+        // ingest_file may copy (files.rs).
+        tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Drop { paths, .. }) => {
+            crate::files::allow_dropped(paths.iter().map(|p| p.to_string_lossy().to_string()));
+        }
+        tauri::WindowEvent::Destroyed => window_destroyed(&handle),
+        _ => {}
+    });
+
+    let shared = app.state::<crate::Shared>();
+    let screen = shared.settings.lock().unwrap().screen.clone();
+    platform::make_non_activating(&win);
+    apply_geometry(app, &screen, false);
+    let _ = win.show();
+    shared.gate.collapsed.store(false, Ordering::Relaxed);
+    // Nothing drawn yet, so nothing takes the mouse until the page reports the
+    // island's shape.
+    if !platform::CURSOR_POLL {
+        refresh_click_through(app, &shared.gate);
+    }
+    shared.gate.set_active(true);
+    crate::log::line(format!("island window built in {} ms", started.elapsed().as_millis()));
+}
+
+/// Nothing is loaded and nothing is pending: the daemon at its smallest.
+/// Called once the startup work has settled.
+pub fn settle_idle() {
+    #[cfg(target_os = "linux")]
+    {
+        trim_heap();
+        platform::page_out_idle();
+    }
+}
+
+/// A webview window just went away: once WebKit has had a moment to let go of
+/// it, and if no other webview window is left, give its helper processes and
+/// freed heap back to the system (FEDO.md §3).
+pub fn reap_soon(app: &AppHandle) {
+    #[cfg(target_os = "linux")]
+    {
+        let handle = app.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+            if !handle.webview_windows().is_empty() {
+                return;
+            }
+            let ended = platform::reap_webkit_helpers();
+            trim_heap();
+            platform::page_out_idle();
+            crate::log::line(format!("no webview left — ended {ended} WebKit helper process(es)"));
+        });
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = app;
+}
+
+/// Hands freed heap back to the OS: glibc keeps most of what a torn-down
+/// webview used in its arenas otherwise.
+#[cfg(target_os = "linux")]
+fn trim_heap() {
+    unsafe {
+        libc::malloc_trim(0);
+    }
+}
+
+fn window_destroyed(app: &AppHandle) {
+    let life = app.state::<Lifecycle>();
+    life.ready.store(false, Ordering::Release);
+    life.idle_epoch.fetch_add(1, Ordering::Relaxed);
+    let shared = app.state::<crate::Shared>();
+    shared.gate.collapsed.store(true, Ordering::Relaxed);
+    shared.gate.set_active(false);
+    shared.gate.set_rect(IslandRect::default());
+    #[cfg(target_os = "linux")]
+    platform::island_destroyed();
+    // The page that would have reported "hidden" is gone.
+    crate::dbus_service::report(app, "idle", "hidden");
+    crate::log::line("island window destroyed (idle)".to_string());
+    reap_soon(app);
+    // Something may have arrived while it was going away.
+    if !life.queue.lock().unwrap().is_empty() {
+        ensure_window(app);
+    }
+}
+
+/// The page has registered every listener: deliver what waited.
+pub fn page_ready(app: &AppHandle) {
+    let life = app.state::<Lifecycle>();
+    life.ready.store(true, Ordering::Release);
+    let queued: Vec<_> = std::mem::take(&mut *life.queue.lock().unwrap());
+    for (event, payload) in queued {
+        let _ = app.emit_to(WINDOW_LABEL, &event, payload);
+    }
+    // Nothing may happen on this page at all; it still has to be able to go.
+    note_activity(app, "idle", "hidden");
+}
+
+/// Called with every report from the page: arms or cancels the idle teardown.
+/// Event-driven — one sleeping task per deadline, no polling.
+pub fn note_activity(app: &AppHandle, state: &str, visibility: &str) {
+    let life = app.state::<Lifecycle>();
+    let epoch = life.idle_epoch.fetch_add(1, Ordering::Relaxed) + 1;
+    if state != "idle" || visibility != "hidden" {
+        return;
+    }
+    let secs = app.state::<crate::Shared>().settings.lock().unwrap().webview_idle_seconds;
+    if secs <= 0.0 {
+        return;
+    }
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_secs_f64(secs.min(86_400.0))).await;
+        let life = handle.state::<Lifecycle>();
+        if life.idle_epoch.load(Ordering::Relaxed) != epoch {
+            return;
+        }
+        // A permission request still waiting is a reason to stay.
+        if !handle.state::<crate::pipe::Pending>().0.lock().unwrap().is_empty() {
+            return;
+        }
+        // The ghost is out on the desktop and the island's page runs his life.
+        if crate::desktop::is_out(&handle) {
+            return;
+        }
+        if let Some(win) = window(&handle) {
+            let h = handle.clone();
+            let _ = handle.run_on_main_thread(move || {
+                // Re-checked where it counts: something may have woken it since.
+                let life = h.state::<Lifecycle>();
+                if life.idle_epoch.load(Ordering::Relaxed) == epoch {
+                    let _ = win.destroy();
+                }
+            });
+        }
+    });
 }
 
 pub fn window(app: &AppHandle) -> Option<WebviewWindow> {

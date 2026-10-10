@@ -95,6 +95,9 @@ class DesktopGhost {
       this.canvas.style.transition = "";
       this.canvas.style.opacity = "1";
     });
+    // This page is built when he leaves the island, so the event that said
+    // "visible" went out before it listened: start from the state itself.
+    if (info?.visible) this.setVisible(true);
     await emitToWindow(ISLAND, DESKTOP_EVENTS.ready);
   }
 

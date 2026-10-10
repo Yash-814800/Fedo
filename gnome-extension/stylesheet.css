@@ -1,0 +1,10 @@
+.fedo-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.55);
+}
+.fedo-dot-idle { background-color: rgba(190, 190, 190, 0.55); }
+.fedo-dot-working { background-color: #62a0ea; }
+.fedo-dot-needs-you { background-color: #ff7800; }
+.fedo-dot-offline { background-color: transparent; border-color: transparent; }

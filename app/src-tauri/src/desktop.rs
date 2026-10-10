@@ -261,6 +261,9 @@ pub struct DesktopInfo {
     mode: &'static str,
     /// He was on the desktop when the app last quit.
     on_desktop: bool,
+    /// He is out right now: a page built after `desktop-visible` was sent
+    /// starts from this instead of waiting for an event that already went.
+    visible: bool,
 }
 
 pub fn window(app: &AppHandle) -> Option<WebviewWindow> {
@@ -273,29 +276,68 @@ fn body_disc() -> MouseShape {
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 
-/// Same reasoning as the settings window: created hidden at launch, before the
-/// island's webview, then only shown and hidden. Nothing is created where the
-/// feature is off.
+/// Nothing is created here: the desktop ghost's webview is built the first
+/// time he leaves the island and destroyed when he is back (FEDO.md §3 — a
+/// WebKit process per idle window is what the memory budget cannot afford).
+/// Nothing is ever created where the feature is off.
 pub fn setup(app: &AppHandle) {
-    let mut mode = platform::desktop_mode();
-    if mode != DesktopMode::Off {
-        match create_window(app, mode) {
-            Some(win) if platform::prepare_desktop_window(&win, mode) => {}
-            Some(win) => {
-                let _ = win.destroy();
-                mode = DesktopMode::Off;
-            }
-            None => mode = DesktopMode::Off,
-        }
-    }
+    let mode = platform::desktop_mode();
     crate::log::line(format!("desktop ghost: {}", mode.as_str()));
     let desktop = Arc::new(Desktop::new(mode));
     app.manage(desktop.clone());
-    // Nothing takes the mouse until he is out.
-    refresh(app, &desktop);
     if mode == DesktopMode::Poll {
         spawn_poll(app.clone(), desktop);
     }
+}
+
+#[cfg(target_os = "linux")]
+fn on_main_thread() -> bool {
+    gtk::is_initialized_main_thread()
+}
+#[cfg(not(target_os = "linux"))]
+fn on_main_thread() -> bool {
+    false
+}
+
+/// The ghost's window, built (hidden, on the main thread) if it is not there.
+/// None where the feature is off or the window cannot be made the way `mode`
+/// needs it; he then stays in the island.
+fn ensure_window(app: &AppHandle, mode: DesktopMode) -> Option<WebviewWindow> {
+    if let Some(w) = window(app) {
+        return Some(w);
+    }
+    if mode == DesktopMode::Off {
+        return None;
+    }
+    fn build(app: &AppHandle, mode: DesktopMode) -> bool {
+        if window(app).is_some() {
+            return true;
+        }
+        let Some(win) = create_window(app, mode) else { return false };
+        if platform::prepare_desktop_window(&win, mode) {
+            return true;
+        }
+        let _ = win.destroy();
+        false
+    }
+    if on_main_thread() {
+        return build(app, mode).then(|| window(app)).flatten();
+    }
+    // The commands that start a flight are async and run elsewhere; GTK is
+    // only touched from the main thread.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(build(&handle, mode));
+    })
+    .ok()?;
+    rx.recv_timeout(Duration::from_secs(10)).ok()?.then(|| window(app)).flatten()
+}
+
+/// He is on the desktop (or being carried there): the island's page, which
+/// runs his life, has to stay loaded.
+pub fn is_out(app: &AppHandle) -> bool {
+    app.try_state::<Arc<Desktop>>().map(|d| d.inner.lock().unwrap().shown).unwrap_or(false)
 }
 
 fn page_url(app: &AppHandle) -> WebviewUrl {
@@ -445,6 +487,7 @@ fn place(app: &AppHandle, d: &Desktop, pos: (f64, f64)) {
 }
 
 fn show(app: &AppHandle, d: &Desktop, at: (f64, f64)) {
+    ensure_window(app, d.mode);
     place(app, d, at);
     d.inner.lock().unwrap().shown = true;
     if let Some(win) = window(app) {
@@ -470,7 +513,10 @@ fn hide(app: &AppHandle, d: &Desktop) {
     if PARK {
         place(app, d, PARKED);
     } else if let Some(win) = window(app) {
-        let _ = win.hide();
+        // Back in the island: nothing left to show, so nothing left loaded.
+        let _ = win.destroy();
+        island::reap_soon(app);
+        return;
     }
     let _ = app.emit_to(LABEL, "desktop-visible", false);
 }
@@ -684,7 +730,8 @@ pub fn desktop_ghost_info(app: AppHandle, desktop: State<Arc<Desktop>>) -> Deskt
         .try_state::<crate::Shared>()
         .map(|s| s.settings.lock().unwrap().desktop_ghost.on_desktop)
         .unwrap_or(false);
-    DesktopInfo { mode: desktop.mode.as_str(), on_desktop: on_desktop && desktop.mode != DesktopMode::Off }
+    let visible = desktop.inner.lock().unwrap().shown;
+    DesktopInfo { mode: desktop.mode.as_str(), on_desktop: on_desktop && desktop.mode != DesktopMode::Off, visible }
 }
 
 /// Dragging the ghost out of the island: the window appears under the pointer
@@ -693,7 +740,7 @@ pub fn desktop_ghost_info(app: AppHandle, desktop: State<Arc<Desktop>>) -> Deskt
 #[tauri::command]
 pub async fn desktop_ghost_pick_up(app: AppHandle, x: f64, y: f64) -> bool {
     let d = app.state::<Arc<Desktop>>().inner().clone();
-    if d.mode == DesktopMode::Off || window(&app).is_none() || d.inner.lock().unwrap().shown {
+    if d.mode == DesktopMode::Off || d.inner.lock().unwrap().shown || ensure_window(&app, d.mode).is_none() {
         return false;
     }
     refresh_layer_display(&app, &d);
@@ -812,7 +859,7 @@ pub async fn desktop_ghost_drag_end(app: AppHandle, x: f64, y: f64) {
 #[tauri::command]
 pub async fn desktop_ghost_fly_out(app: AppHandle, anywhere: Option<bool>) -> bool {
     let d = app.state::<Arc<Desktop>>().inner().clone();
-    if d.mode == DesktopMode::Off || window(&app).is_none() {
+    if d.mode == DesktopMode::Off || ensure_window(&app, d.mode).is_none() {
         return false;
     }
     refresh_layer_display(&app, &d);

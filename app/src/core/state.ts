@@ -99,6 +99,8 @@ export interface Settings {
   soundEnabled: boolean;
   soundVolume: number;
   autoCloseInterval: number;
+  /** Seconds hidden and idle before the island's webview is destroyed (0: never). */
+  webviewIdleSeconds: number;
   /** Hovering the island opens it all the way (off: hovering only peeks). */
   openOnHover: boolean;
   absenceInterval: number;
@@ -139,6 +141,7 @@ export const DEFAULT_SETTINGS: Settings = {
   soundEnabled: true,
   soundVolume: 0.12,
   autoCloseInterval: 15,
+  webviewIdleSeconds: 60,
   openOnHover: false,
   absenceInterval: 180,
   activeIntegrations: [],
