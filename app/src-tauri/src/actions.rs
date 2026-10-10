@@ -372,9 +372,102 @@ fn param<'a>(a: &'a Action, k: &str) -> &'a str {
     a.params[k].as_str().unwrap_or("")
 }
 
+/// "Ask Antigravity …": the card the user confirms before `agy -p` runs.
+/// Antigravity's print mode edits files and runs commands on its own (a probe
+/// with `--mode plan --sandbox` still created a file), so it is never started
+/// without this card.
+pub fn build_antigravity(prompt: &str) -> Built {
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        return Built::Say("What should I ask Antigravity?".into());
+    }
+    if prompt.len() > 4000 {
+        return Built::Say("That's too long to send to Antigravity from here.".into());
+    }
+    if crate::platform::find_on_path("agy").is_none() {
+        return Built::Say("The `agy` command isn't on your PATH.".into());
+    }
+    Built::One(Action {
+        kind: "antigravity".into(),
+        title: "Ask Antigravity".into(),
+        lines: vec![format!("“{prompt}”"), "Runs: agy -p … in your home folder".into()],
+        note: Some("Antigravity may edit files and run commands to do this. Its answer comes back here.".into()),
+        warning: None,
+        params: json!({ "prompt": prompt }),
+    })
+}
+
+fn run_antigravity(prompt: &str) -> Result<String, String> {
+    use std::io::Read;
+    let prompt = prompt.trim();
+    if prompt.is_empty() || prompt.len() > 4000 {
+        return Err("Nothing to ask.".into());
+    }
+    let agy = crate::platform::find_on_path("agy").ok_or("The `agy` command isn't on your PATH.")?;
+    let mut child = Command::new(agy)
+        .args(["-p", prompt, "--output-format", "json"])
+        .current_dir(crate::platform::home_dir())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Couldn't start agy: {e}"))?;
+    let mut out = child.stdout.take().ok_or("no output")?;
+    let reader = std::thread::spawn(move || {
+        let mut s = String::new();
+        let _ = out.read_to_string(&mut s);
+        s
+    });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if std::time::Instant::now() < deadline => std::thread::sleep(std::time::Duration::from_millis(100)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("Antigravity took longer than 5 minutes; I stopped waiting.".into());
+            }
+        }
+    }
+    let raw = reader.join().unwrap_or_default();
+    antigravity_answer(&raw)
+}
+
+/// The answer in `agy --output-format json`'s output.
+pub fn antigravity_answer(raw: &str) -> Result<String, String> {
+    let v: Value = serde_json::from_str(raw.trim()).map_err(|_| "Antigravity returned something unreadable.".to_string())?;
+    let text = v["response"].as_str().unwrap_or("").trim();
+    if v["status"].as_str().is_some_and(|s| s != "SUCCESS") {
+        return Err(if text.is_empty() { format!("Antigravity reported {}.", v["status"]) } else { text.to_string() });
+    }
+    if text.is_empty() {
+        return Err("Antigravity gave no answer.".into());
+    }
+    Ok(text.to_string())
+}
+
 /// Runs a confirmed action. Returns what to tell the user.
 pub fn do_action(a: &Action) -> Result<String, String> {
+    let result = do_action_inner(a);
+    let detail = match a.kind.as_str() {
+        "antigravity" => param(a, "prompt").to_string(),
+        _ => a.lines.join(" | "),
+    };
+    crate::log::action(
+        &a.kind,
+        &detail,
+        &match &result {
+            Ok(_) => "ok".to_string(),
+            Err(e) => format!("failed: {e}"),
+        },
+    );
+    result
+}
+
+fn do_action_inner(a: &Action) -> Result<String, String> {
     match a.kind.as_str() {
+        "antigravity" => run_antigravity(param(a, "prompt")),
         "call" => {
             let dev = reachable(param(a, "device"))?;
             phone::dial(&dev, param(a, "number"))?;
@@ -455,6 +548,35 @@ fn reachable(id: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn antigravity_answers_come_out_of_the_json() {
+        let ok = r#"{"conversation_id":"x","status":"SUCCESS","response":"done\n","num_turns":1}"#;
+        assert_eq!(antigravity_answer(ok).unwrap(), "done");
+        assert!(antigravity_answer(r#"{"status":"ERROR","response":"quota exceeded"}"#).unwrap_err().contains("quota"));
+        assert!(antigravity_answer(r#"{"status":"SUCCESS","response":""}"#).is_err());
+        assert!(antigravity_answer("not json").is_err());
+    }
+
+    /// Live: really runs `agy -p` through the confirmed-action path.
+    /// `cargo test -p fedo --lib live_antigravity -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn live_antigravity_answers() {
+        let Built::One(action) = build_antigravity("Reply with exactly the word: pong. Do not use any tools.") else {
+            panic!("no card");
+        };
+        assert_eq!(action.kind, "antigravity");
+        let answer = do_action(&action).unwrap();
+        println!("{answer:?}");
+        assert!(answer.to_lowercase().contains("pong"));
+    }
+
+    #[test]
+    fn nothing_is_asked_of_antigravity_without_words() {
+        assert!(matches!(build_antigravity("   "), Built::Say(_)));
+        assert!(matches!(build_antigravity(&"x".repeat(5000)), Built::Say(_)));
+    }
 
     fn people() -> Vec<Contact> {
         let c = |n: &str, t: &[&str], e: &[&str]| Contact {

@@ -70,6 +70,64 @@ args.
   --json-schema` guarantee is replaced by Ollama's schema-constrained output
   plus Fedo's own re-validation.
 
+## Phase 9 — Antigravity
+
+### What is installed (checked)
+
+`agy` at `~/.local/bin/agy` (the native CLI/IDE; config in `~/.gemini/`,
+`~/.gemini/antigravity-cli/`), plus the `google.google-antigravity-1.7.0`
+extension in the flatpak VS Code. `which antigravity` / `which code` find
+nothing. `agy` has `-p/--print`, `--output-format json|stream-json`,
+`--mode accept-edits|plan`, `--sandbox`, `--conversation`.
+
+### Done detection — already worked, now proven
+
+- Hook mechanism exists on Linux and is the same file as on macOS:
+  `~/.gemini/config/hooks.json` (events `PreToolUse`, `PostToolUse`,
+  `PreInvocation`, `PostInvocation`, `Stop`). The `fedo` group (written by
+  Settings → Agents → Antigravity, via `config_file.rs`) sits next to the older
+  `coucou` group; the relay is `~/.local/share/fedo/bin/fedo-hook --agent
+  antigravity <Event>`.
+- Verified with real runs of `agy -p …`: the daemon logs `UserPromptSubmit
+  (antigravity)` → `PreToolUse/PostToolUse (antigravity)` → `Stop
+  (antigravity)`; the D-Bus `State` went `idle → working → idle` and the island
+  peeked then opened on the finished card (the same code path as Claude Code:
+  sound + the "notify when done" desktop notification when the island isn't
+  showing it). No log-file watching was needed.
+- The hook log line now names the agent (it was ambiguous with Claude Code's).
+
+### Talking to it
+
+"ask antigravity …", "ask agy …", "tell antigravity to …" (and the router's new
+`antigravity` intent for looser phrasing) → a **confirmation card** → `agy -p
+<prompt> --output-format json` in the home folder (5 min limit) → its answer in
+the island. This is the *non-interactive prompt mode* route; no clipboard/focus
+fallback was needed.
+
+**Why the card is mandatory:** `agy -p` acts on its own. A probe asked it to
+create a file with `--mode plan`, and then with `--mode plan --sandbox`: both
+times the file was created. Plan mode and the sandbox are not read-only
+guarantees, so Fedo does not run it without Enter (FEDO.md §5: "no
+exceptions"). The card says it may edit files and run commands.
+
+### Also fixed here
+
+- **`actions.log`** (FEDO.md §5 asked for it; it didn't exist): every
+  confirmed card action (call/SMS/WhatsApp/Gmail/share/Antigravity), every
+  terminal/inline command and calendar write is appended to
+  `~/.local/share/fedo/actions.log` as `time⇥kind⇥detail⇥outcome`. Not written
+  from unit tests.
+
+### Not verified
+
+- The Antigravity pill and the card in the island were not looked at on screen
+  (state transitions were read over D-Bus). `agy`'s answer for a long task
+  arrives as one block when it finishes; there is no streaming.
+- Antigravity's *interactive* sessions in the IDE fire the same hooks, but I
+  only ran `agy -p` here. Hooks for approvals in the IDE (`PermissionRequest`)
+  aren't something `hooks.json` offers, so approving Antigravity from the
+  island isn't possible — only "working / done".
+
 ## Phase 8 — voice
 
 ### What was built

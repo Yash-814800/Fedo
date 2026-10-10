@@ -222,7 +222,11 @@ async fn handle(app: AppHandle, mut pipe: impl Relay) {
     if event != "PermissionRequest" {
         // The status line relay calls in with every Claude Code update: not log-worthy.
         if event != "StatusLine" {
-            log::line(format!("hook {event}"));
+            // The relay tags every non-Claude-Code agent; show whose it is.
+            match payload.get("fedo_agent").and_then(Value::as_str) {
+                Some(agent) => log::line(format!("hook {event} ({agent})")),
+                None => log::line(format!("hook {event}")),
+            }
         }
         crate::island::emit(&app, "hook", payload);
         pipe.finish();

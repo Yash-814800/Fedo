@@ -178,6 +178,8 @@ pub enum Fast {
     Media(&'static str),
     /// "Play <song> by <artist>": the words after "play", for Spotify.
     Play(String),
+    /// "Ask Antigravity …": the words after it; always a confirm card first.
+    Antigravity(String),
     /// Timers, reminders, agenda, deadlines (timeplan.rs).
     Time(crate::timeplan::Timed),
     /// Phase 6.
@@ -272,6 +274,14 @@ pub fn fast_path(text: &str) -> Option<Fast> {
             return Some(Fast::Notifications)
         }
         _ => {}
+    }
+    for lead in ["ask antigravity to ", "ask antigravity ", "ask agy to ", "ask agy ", "tell antigravity to ", "tell antigravity ", "antigravity: ", "agy: "] {
+        if l.starts_with(lead) {
+            let rest = t[lead.len()..].trim();
+            if !rest.is_empty() {
+                return Some(Fast::Antigravity(rest.to_string()));
+            }
+        }
     }
     if let Some(what) = play_request(t) {
         return Some(Fast::Play(what));
@@ -758,7 +768,7 @@ pub fn plan_card(plan: &FilePlan, home: &Path) -> Result<Card, String> {
 const ROUTER_SCHEMA: &str = r#"{
   "type": "object",
   "properties": {
-    "intent": {"type": "string", "enum": ["chat", "install", "kill", "files", "command", "prompt", "timer", "reminder", "event", "deadline", "agenda", "media", "play", "mute", "notifications", "call", "sms", "whatsapp", "email"]},
+    "intent": {"type": "string", "enum": ["chat", "install", "kill", "files", "command", "prompt", "timer", "reminder", "event", "deadline", "agenda", "media", "antigravity", "play", "mute", "notifications", "call", "sms", "whatsapp", "email"]},
     "args": {"type": "object"},
     "command": {"type": "string"},
     "explanation": {"type": "string"},
@@ -781,6 +791,7 @@ intent:\n\
 - deadline: something due by a date (\"apply before Oct 20\", \"submit by Friday\"). args {\"title\": what must be done, \"date\": \"YYYY-MM-DD\"}.\n\
 - agenda: asks what is on the calendar. args {\"days\": 0 for today, 1 for tomorrow, 7 for the week}.\n\
 - media: pause, resume, skip or go back in music. args {\"action\": \"playPause\"|\"next\"|\"previous\"}.\n\
+- antigravity: the user wants Antigravity (the other coding agent, `agy`) to do or answer something. args {\"prompt\": what to ask it, in the user's words}.\n\
 - play: play a named song on Spotify (\"play Earrings by Malcolm Todd\"). args {\"query\": the song and artist as said}.\n\
 - mute: mute or unmute Fedo's sounds. args {\"on\": boolean}.\n\
 - notifications: read or summarise the user's phone notifications or messages.\n\
@@ -983,6 +994,7 @@ fn route_blocking(
                 })
             }
             Fast::Play(what) => Ok(play_song(&what, &home)),
+            Fast::Antigravity(prompt) => Ok(built(Ok(crate::actions::build_antigravity(&prompt)))),
             Fast::Time(t) => time_fast(app, t),
             Fast::Notifications => Ok(phone_notifications()),
             Fast::Install(name) => Ok(install_reply(&name, find_candidates(&name))),
@@ -1092,6 +1104,10 @@ fn dispatch(
             };
             Ok(gmail_reply(&to, &subject, &body, if attach { file.as_deref() } else { None }))
         }
+        "antigravity" => match arg("prompt") {
+            Some(p) => Ok(built(Ok(crate::actions::build_antigravity(&p)))),
+            None => Ok(Reply::Note { text: "What should I ask Antigravity?".into() }),
+        },
         "play" => match arg("query") {
             Some(q) => Ok(play_song(&q, home)),
             None => Ok(Reply::Note { text: "Which song should I play?".into() }),
@@ -1312,9 +1328,19 @@ pub async fn assist_create_event(
     if title.is_empty() || title.len() > 200 {
         return Err("The event needs a title.".into());
     }
-    tauri::async_runtime::spawn_blocking(move || create_event(&app, &kind, &title, start, end, all_day))
+    let logged = format!("{kind}: {title} @ {start}");
+    let result = tauri::async_runtime::spawn_blocking(move || create_event(&app, &kind, &title, start, end, all_day))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    crate::log::action(
+        "calendar",
+        &logged,
+        &match &result {
+            Ok(_) => "ok".to_string(),
+            Err(e) => format!("failed: {e}"),
+        },
+    );
+    result
 }
 
 /// What the file the user dropped is (the page names it; the inbox check is in actions.rs).
@@ -1650,10 +1676,16 @@ pub async fn assist_run(command: String, inline: bool) -> Result<RunResult, Stri
     }
     let (risk, _, sudo) = assess(&command, Risk::Safe);
     if inline && risk == Risk::Safe && !sudo && !command.contains('\n') {
-        return tauri::async_runtime::spawn_blocking(move || run_inline(&command))
+        let logged = command.clone();
+        let result = tauri::async_runtime::spawn_blocking(move || run_inline(&command))
             .await
             .map_err(|e| e.to_string());
+        if let Ok(r) = &result {
+            crate::log::action("command", &logged, if r.ok { "ok (inline)" } else { "exited non-zero (inline)" });
+        }
+        return result;
     }
+    crate::log::action("command", &command, "opened in a terminal");
     run_in_terminal(&command)?;
     Ok(RunResult { ok: true, output: String::new(), note: "Opened in a terminal window.".into() })
 }
@@ -1683,6 +1715,12 @@ mod tests {
         assert_eq!(fast_path("play"), Some(Fast::Media("playPause")));
         assert_eq!(fast_path("play spotify"), Some(Fast::Media("playPause")));
         assert_eq!(fast_path("play minecraft"), None);
+        assert_eq!(
+            fast_path("Ask Antigravity to add a README to the fedo repo"),
+            Some(Fast::Antigravity("add a README to the fedo repo".into()))
+        );
+        assert_eq!(fast_path("ask agy what changed today"), Some(Fast::Antigravity("what changed today".into())));
+        assert_eq!(fast_path("ask antigravity"), None);
         assert_eq!(fast_path("open spotify and play music"), None);
         assert_eq!(fast_path("install obs"), Some(Fast::Install("obs".into())));
         assert_eq!(fast_path("Install Visual Studio Code"), Some(Fast::Install("visual studio code".into())));
