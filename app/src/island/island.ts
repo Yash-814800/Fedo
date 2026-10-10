@@ -246,6 +246,7 @@ export class Island {
       },
       openSettingsWindow: () => void Bridge.openSettingsWindow(),
       blip: () => Sound.play("blip"),
+      pin: (on) => this.setPinned(on),
     };
 
     this.wakeStrip = h("div", { id: "wake-strip" });

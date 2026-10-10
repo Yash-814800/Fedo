@@ -2,6 +2,7 @@
 
 mod agent_hooks;
 mod agents;
+mod assist;
 mod chat;
 mod config_file;
 mod dbus_service;
@@ -129,7 +130,7 @@ fn set_system_languages(app: AppHandle, languages: Vec<String>) {
 
 /// The tray/extension's "Mute sounds": flips the one setting and tells the
 /// island window, which plays the sounds.
-fn set_sound_enabled(app: &AppHandle, enabled: bool) {
+pub(crate) fn set_sound_enabled(app: &AppHandle, enabled: bool) {
     let shared = app.state::<Shared>();
     let updated = {
         let mut current = shared.settings.lock().unwrap();
@@ -674,6 +675,9 @@ pub fn run() {
             log_line,
             chat_send,
             chat_reset,
+            assist::assist_route,
+            assist::assist_run,
+            assist::assist_copy,
             notify::notify_done,
             ingest_file,
             open_settings_window,

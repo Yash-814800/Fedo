@@ -63,7 +63,17 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     spellcheck: "false",
   }) as HTMLInputElement;
   const send = h("button", { class: "send-btn", title: tl(STRINGS.send) }, svg(ICONS.arrowUp, 11));
-  const bar = h("div", { class: "chat-bar" }, input, send);
+  // "Write me a prompt": the text goes to the prompt writer, not the router.
+  const promptToggle = h("button", {
+    class: "prompt-toggle", title: "Rewrite what I type as a prompt for Claude Code",
+  }, "Prompt");
+  promptToggle.addEventListener("click", () => {
+    State.promptMode = !State.promptMode;
+    promptToggle.classList.toggle("on", State.promptMode);
+    input.placeholder = State.promptMode ? "Paste your rough reaction…" : t(STRINGS.placeholderFirst);
+    input.focus();
+  });
+  const bar = h("div", { class: "chat-bar" }, input, promptToggle, send);
 
   const body = h("div", { class: "chat-body" });
   body.append(chipRow, log, bar);
@@ -98,6 +108,29 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     State.stateOverride = "thinking";
     State.notify();
     onHeightChange();
+
+    // The assistant first: obvious things are handled on the spot, system
+    // actions become a card, everything else falls through to the chat.
+    const promptMode = State.promptMode;
+    try {
+      const routed = await Bridge.assistRoute(query, promptMode, State.chatHistory.length > 1);
+      if (routed && routed.kind !== "chat") {
+        State.chatHistory.pop();
+        State.stateOverride = null;
+        State.promptMode = false;
+        promptToggle.classList.remove("on");
+        State.assist = routed;
+        State.view = "command";
+        Sound.play(routed.kind === "card" || routed.kind === "choices" ? "question" : "approve");
+        sending = false;
+        State.notify();
+        onHeightChange();
+        return;
+      }
+    } catch (err) {
+      // The router failing must never take the chat down with it.
+      void Bridge.log(`assist route failed: ${String(err)}`);
+    }
 
     const file = State.droppedFile;
     const context: ChatContext | null =

@@ -36,6 +36,12 @@ limitations recorded as each phase lands.
   `app/src/ghost/debug-menu.ts` is the hidden debug menu (Shift+click the
   ghost in the open island, or Ctrl+Alt+Shift+D): every state, emote, move
   and sound.
+- `app/src-tauri/src/assist.rs` — the command assistant: router (local fast
+  path, then `claude -p --json-schema`), grounded resolvers (dnf/flatpak,
+  `ps`, filesystem plans), Fedo's own risk rules, and the terminal/inline
+  runners. `app/src/views/command.ts` is the card. **Nothing runs without the
+  card's Enter / Run**; model-written command text for file tasks is never run
+  (Fedo builds it from a validated plan).
 - `app/src-tauri/src/chat.rs` — the chat: one `claude -p` run per turn
   (stream-json, `--resume` for follow-ups, read-only tools). `notify.rs` is
   the desktop notification; `unlock.rs` the Monday-unlock recap trigger.

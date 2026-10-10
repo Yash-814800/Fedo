@@ -2656,3 +2656,42 @@ html[data-dir="rtl"] #views :is(.bubble, .reply .md-p, .reply .md-h, .reply .md-
   cursor: pointer;
 }
 #debug-menu .dbg-btn:hover { background: rgba(255, 255, 255, 0.16); }
+
+/* The command card (src/views/command.ts). */
+.cmd-card .cmd-stack { padding: 4px 18px 4px 84px; gap: 6px; }
+.cmd-body { display: flex; flex-direction: column; gap: 6px; max-height: 128px; overflow-y: auto; }
+.cmd-code {
+  font: 12.5px/1.35 ui-monospace, "JetBrains Mono", monospace;
+  padding: 7px 9px; border-radius: 8px; background: rgba(0,0,0,0.45);
+  color: #f4f5f8; word-break: break-all; user-select: text;
+}
+.cmd-why { font-size: 12px; color: rgba(255,255,255,0.72); }
+.cmd-why.big { font-size: 14px; color: #fff; }
+.cmd-warn { font-size: 11.5px; padding-left: 8px; border-left: 2px solid #f59e0b; color: #fcd34d; }
+.cmd-warn.dangerous { border-color: #f4505e; color: #fda4af; }
+.cmd-details, .cmd-prompt {
+  margin: 0; font: 11px/1.4 ui-monospace, monospace; color: rgba(255,255,255,0.8);
+  white-space: pre-wrap; user-select: text;
+}
+.cmd-details.tall { max-height: 110px; overflow-y: auto; }
+.cmd-prompt { font-size: 11.5px; }
+.cmd-edit {
+  font: 12.5px ui-monospace, monospace; padding: 7px 9px; border-radius: 8px;
+  background: rgba(0,0,0,0.5); border: 1px solid rgba(255,255,255,0.25); color: #fff;
+}
+.cmd-choice {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left;
+  padding: 6px 9px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.06); color: #fff; font-size: 12px; cursor: pointer;
+}
+.cmd-choice:hover { background: rgba(255,255,255,0.14); }
+.cmd-choice span { font-size: 11px; color: rgba(255,255,255,0.6); }
+.risk-chip { padding: 1px 7px; border-radius: 999px; font-size: 10px; font-weight: 700; text-transform: uppercase; }
+.risk-chip.safe { background: rgba(34,197,94,0.25); color: #86efac; }
+.risk-chip.careful { background: rgba(245,158,11,0.25); color: #fcd34d; }
+.risk-chip.dangerous { background: rgba(244,80,94,0.3); color: #fda4af; }
+.chat-bar .prompt-toggle {
+  border: 0; border-radius: 8px; padding: 0 8px; font-size: 11px; cursor: pointer;
+  background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.7);
+}
+.chat-bar .prompt-toggle.on { background: rgba(99,102,241,0.6); color: #fff; }

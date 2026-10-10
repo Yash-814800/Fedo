@@ -2,6 +2,7 @@
 
 import type { BotEmoteName, BotStateName, IslandMode, IslandViewName } from "./layout";
 import type { EyeShape } from "../ghost/engine";
+import type { AssistReply } from "./bridge";
 import {
   DEFAULT_MAIN_PILL, HOST_OS, availablePills, orderPills, pillDefinition, sanitizeDeclared,
   toggleDeclared, type HostOs, type PillDefinition,
@@ -199,6 +200,10 @@ class AppState {
   searchResult: SearchResult | null = null;
   chatHistory: ChatMessage[] = [];
   pendingApproval: ApprovalInfo | null = null;
+  /** What the command card shows (set by the chat's router), or null. */
+  assist: AssistReply | null = null;
+  /** The chat bar is in "write me a prompt" mode. */
+  promptMode = false;
   /** The pill that was in front when the card came up; it comes back after. */
   focusBeforeApproval: string | null = null;
 

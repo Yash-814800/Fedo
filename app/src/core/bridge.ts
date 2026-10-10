@@ -156,6 +156,12 @@ export const Bridge = {
   chatSend: (query: string, context: ChatContext | null) =>
     callOrThrow<{ text: string }>("chat_send", { query, context }),
   chatReset: () => call<void>("chat_reset"),
+  /** The command assistant's router (Rust assist.rs). `promptMode` rewrites the text as a prompt. */
+  assistRoute: (query: string, promptMode: boolean, fastOnly: boolean) =>
+    call<AssistReply>("assist_route", { query, promptMode, fastOnly }),
+  /** Runs a confirmed command: a new terminal window, or hidden when `inline` and Fedo calls it safe. */
+  assistRun: (command: string, inline: boolean) => call<AssistRun>("assist_run", { command, inline }),
+  assistCopy: (text: string) => call<boolean>("assist_copy", { text }),
   /** A desktop notification (GNOME banner). False when no daemon took it. */
   notifyDone: (title: string, body: string) => call<boolean>("notify_done", { title, body }),
   /**
@@ -435,4 +441,38 @@ export async function onDragDrop(handler: (e: DragDropPayload) => void) {
 export async function onEvent<T>(name: string, handler: (payload: T) => void) {
   if (!IS_TAURI) return () => {};
   return listen<T>(name, (e) => handler(e.payload));
+}
+
+// ── Command assistant ─────────────────────────────────────────────────────────
+
+export type AssistRisk = "safe" | "careful" | "dangerous";
+
+export interface AssistCard {
+  command: string;
+  explanation: string;
+  risk: AssistRisk;
+  warnings: string[];
+  details: string[];
+  sudo: boolean;
+  inlineOk: boolean;
+}
+
+export interface AssistChoice {
+  label: string;
+  detail: string;
+  card: AssistCard;
+}
+
+export type AssistReply =
+  | { kind: "chat" }
+  | { kind: "done"; text: string }
+  | { kind: "card"; card: AssistCard }
+  | { kind: "choices"; title: string; options: AssistChoice[] }
+  | { kind: "prompt"; text: string }
+  | { kind: "note"; text: string };
+
+export interface AssistRun {
+  ok: boolean;
+  output: string;
+  note: string;
 }

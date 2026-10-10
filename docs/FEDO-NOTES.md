@@ -3,6 +3,90 @@
 A running log of decisions, things verified on this machine, and known
 limitations, per `FEDO.md` rule 7. Newest phase first.
 
+## Phase 4 — command assistant + prompt writer
+
+### What was built
+
+- **Router** (`app/src-tauri/src/assist.rs`, command `assist_route`). Every
+  chat message goes through it first; a continuing conversation (more than one
+  message) only gets the local fast path, so follow-ups cost nothing extra.
+  1. Fast path, no model: mute/unmute, play/pause/next/previous (Spotify,
+     existing MPRIS code), "install X", "kill X" / "force kill X" (1–3 plain
+     words only), "rewrite this as a prompt …", timers / "read my
+     notifications" (recognised, answered with "next phase").
+  2. Otherwise `claude -p --model haiku --json-schema <schema> --tools ""`
+     (`structured_output` is validated again and retried once). Intents:
+     chat, install, kill, files, command, prompt, timer, media, mute,
+     notifications. ~3 s round trip.
+- **Command card** (`views/command.ts`, view `command`): exact command, one-line
+  explanation, risk chip/colour, warnings, details. **Enter** runs in a new
+  Ptyxis window, **Esc** cancels, **E** edits (edited commands always go to
+  the terminal), **H** runs hidden with output in the island — offered only
+  when Fedo's own rules call the command safe and sudo-free. The island is
+  pinned open while a card waits. Nothing runs except from those actions.
+- **Risk is Fedo's, not the model's**: `assess()` can only raise it — sudo,
+  `rm -r`, `dd`, `mkfs`, partition tools, device writes, `curl | sh`,
+  recursive chmod/chown, removals, and any kill naming gnome-shell, systemd,
+  Xwayland, pipewire, wireplumber, mutter, dbus, gdm, NetworkManager or fedo
+  (red "part of your desktop session" warning). The run command re-assesses
+  and refuses `inline` for anything not plain-safe.
+- **Install**: `flatpak search` (de-duplicated, plugins/themes/runtimes
+  filtered, ranked by name) and `dnf search` (cache first); Flathub's top hit
+  names the program ("OBS Studio") so `obs-studio` beats `obs-signd`. Offers
+  one dnf and one Flathub choice, marks what is already installed.
+  `sudo dnf install obs-studio` / `flatpak install flathub com.obsproject.Studio`.
+- **Kill**: resolves real PIDs from `ps` (never itself), shows name/PID/memory,
+  `kill <pids>` (SIGTERM), `flatpak kill <app id>` when the PIDs belong to a
+  Flatpak app (`flatpak ps`), `kill -9` only on "force kill X".
+- **Files**: a second `claude -p` with `Glob`, `ls`, `find` only resolves fuzzy
+  names against the real filesystem and returns a structured plan
+  (`cp`/`mv`/`mkdir`). Fedo validates every source exists and every destination
+  folder exists or is created by an explicit `mkdir` (called out as a warning),
+  then **builds the command itself** with every path quoted — the model's
+  command text is never run. Several matches → a choice list.
+- **Prompt writer**: the chat bar's *Prompt* toggle, or "rewrite this as a
+  prompt: …". `claude -p --model sonnet` with a prompt-engineering system
+  prompt → what's wrong / expected / constraints / acceptance checklist.
+  **Copy** goes through `wl-copy`; **Jump to terminal** copies and raises the
+  focused session's window.
+
+### Verified on this machine
+
+- `ptyxis --new-window -- bash -lc '<cmd>'` runs the command (checked with a
+  file write); `wl-copy`/`wl-paste` round trip.
+- `claude --json-schema` exists in 2.1.296 and returns `structured_output`;
+  `--bare` does **not** authenticate with a subscription login (0 tokens,
+  no answer) so it isn't used.
+- Live (ignored-by-default tests, real `dnf`/`flatpak`/`claude`):
+  "obs" → `obs-studio` (dnf) + `com.obsproject.Studio` (Flathub, found
+  already installed) in ~2.3 s; "vlc" → `vlc` + `org.videolan.vlc`;
+  a spawned `sleep` is found by PID and `gnome-shell` earns the red warning;
+  the file plan for "copy the ds resume into tempres and rename it X.pdf"
+  gave real paths and an explicit `mkdir -p`; "how much disk space is left" →
+  `df -h ~` (safe); "why is the sky blue" → chat; the prompt writer turned a
+  rambling reaction into a structured prompt.
+- `cargo test --workspace`: 174 pass (7 ignored live), `tsc`, `npm run build`.
+- The card rendered in headless Chrome (danger card and a choice list).
+
+### Not verified / known gaps
+
+- **Not driven end to end in the real island.** The pieces above were run
+  separately; chat box → router → card → Enter → Ptyxis window has not been
+  exercised in the live app (no UI driver on this machine).
+- **"Send to session": no reliable mechanism.** Claude Code has no external
+  input channel for a running interactive session, there is no
+  `wtype`/`ydotool`, and GNOME Wayland blocks synthetic keystrokes; only the
+  RemoteDesktop portal (v2 here) could, behind a consent dialog, and only into
+  whatever window has focus. So it is **copy + jump to terminal**, as the spec
+  allows.
+- Voice "do it" / "cancel" is Phase 8. Timers (Phase 5) and notifications
+  (Phase 6) are recognised but not handled.
+- Play vs pause is one MPRIS toggle; "play" while playing pauses.
+- dnf search needs the repo metadata cache; with none it falls back to an
+  online query (slower).
+- Flathub apps are listed from `flatpak search` only (no ratings); the
+  ranking is name-based, so an unusual program name may show look-alikes.
+
 ## Phase 3 — Claude Code core
 
 ### What was built

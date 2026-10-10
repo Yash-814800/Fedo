@@ -10,6 +10,7 @@ import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { createMiniBot, pruneMiniBots } from "../ghost/minibots";
 import { buildPrompt } from "./chat";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
+import { buildCommand } from "./command";
 import { highlightRow, listRows, openRow } from "./github";
 import { pillDefinition, sessionSubtitle } from "../core/pills";
 import {
@@ -46,6 +47,8 @@ export interface ViewActions {
   setAutoClose(seconds: number): void;
   openSettingsWindow(): void;
   blip(): void;
+  /** Keeps the open island from folding away (a card waiting for a decision). */
+  pin(on: boolean): void;
 }
 
 export interface ViewHost {
@@ -770,6 +773,7 @@ export function buildViews(
   map.set("uploading", buildUploading());
   map.set("choose", buildChoose(actions));
   map.set("recap", buildRecap(actions));
+  map.set("command", buildCommand(actions));
   // Not in the Windows v1: sending a file by email, window attach + web result.
   map.set("mail", buildPlaceholder(tl("Sending by email isn't in this version."), ""));
   map.set("searching", buildPlaceholder(tl("Claude is searching…"), ""));
