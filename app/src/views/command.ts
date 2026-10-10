@@ -10,7 +10,7 @@
 // Plain English, deliberately outside the i18n tables like the debug menu.
 
 import { h, clear } from "./dom";
-import { Bridge, type AssistCard, type AssistReply } from "../core/bridge";
+import { Bridge, type AssistCard, type AssistEvent, type AssistReply } from "../core/bridge";
 import { State } from "../core/state";
 import type { ViewActions, ViewHost } from "./views";
 
@@ -23,6 +23,7 @@ const RISK_COLOR: Record<AssistCard["risk"], string> = {
 type Phase =
   | { kind: "ask" }
   | { kind: "edit"; text: string }
+  | { kind: "editEvent"; title: string; when: string }
   | { kind: "ran"; text: string };
 
 export function buildCommand(actions: ViewActions): ViewHost {
@@ -130,6 +131,85 @@ export function buildCommand(actions: ViewActions): ViewHost {
     row.append(button("Run in terminal", "primary", () => void run(false), "⏎"));
   }
 
+  /** datetime-local / date input value from epoch seconds (local time). */
+  const inputValue = (epoch: number, allDay: boolean) => {
+    const d = new Date(epoch * 1000);
+    const p = (n: number) => String(n).padStart(2, "0");
+    const day = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+    return allDay ? day : `${day}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+
+  async function createEvent(ev: AssistEvent, title: string, when: string) {
+    if (busy) return;
+    busy = true;
+    try {
+      let start = ev.start;
+      let end = ev.end;
+      if (when) {
+        // The edited time: the browser parses a local datetime-local / date value.
+        const parsed = new Date(ev.allDay ? `${when}T12:00` : when).getTime() / 1000;
+        if (Number.isFinite(parsed)) {
+          end = ev.allDay ? parsed : parsed + (ev.end - ev.start);
+          start = parsed;
+        }
+      }
+      const text = await Bridge.assistCreateEvent(ev.kind, title, start, end, ev.allDay);
+      phase = { kind: "ran", text: text ?? "Needs the Fedo app." };
+    } catch (err) {
+      phase = { kind: "ran", text: String(err).replace(/^Error:\s*/, "") };
+    } finally {
+      busy = false;
+    }
+    State.notify();
+  }
+
+  function renderEvent(ev: AssistEvent) {
+    cardEl.style.setProperty("--wash", "rgba(99,102,241,0.5)");
+    who.replaceChildren(
+      h("span", { class: "risk-chip safe", text: ev.kind === "deadline" ? "deadline" : "event" }),
+      h("span", { text: `goes to ${ev.calendar}` }),
+    );
+    if (phase.kind === "editEvent") {
+      const title = h("input", { class: "cmd-edit", type: "text", value: phase.title }) as HTMLInputElement;
+      const when = h("input", {
+        class: "cmd-edit", type: ev.allDay ? "date" : "datetime-local", value: phase.when,
+      }) as HTMLInputElement;
+      for (const i of [title, when]) {
+        i.addEventListener("keydown", (e) => {
+          e.stopPropagation();
+          if (e.key === "Enter") { e.preventDefault(); void createEvent(ev, title.value.trim() || ev.title, when.value); }
+          if (e.key === "Escape") { e.preventDefault(); phase = { kind: "ask" }; State.notify(); }
+        });
+      }
+      body.append(title, when);
+      row.append(
+        button("Back", "secondary", () => { phase = { kind: "ask" }; State.notify(); }, "Esc"),
+        button("Add to calendar", "primary", () => void createEvent(ev, title.value.trim() || ev.title, when.value), "⏎"),
+      );
+      queueMicrotask(() => title.focus());
+      return;
+    }
+    body.append(
+      h("div", { class: "cmd-code", text: ev.title }),
+      h("div", { class: "cmd-why big", text: ev.when }),
+    );
+    if (ev.reminders.length) {
+      const f = (t: number) =>
+        new Date(t * 1000).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" });
+      body.append(h("pre", { class: "cmd-details", text: ev.reminders.map((r) => `Reminder ${f(r.at)} — ${r.label}`).join("\n") }));
+    } else {
+      body.append(h("div", { class: "cmd-why", text: "No reminders: it's too close or already past." }));
+    }
+    row.append(
+      button("Cancel", "secondary", () => finish(), "Esc"),
+      button("Edit", "secondary", () => {
+        phase = { kind: "editEvent", title: ev.title, when: inputValue(ev.start, ev.allDay) };
+        State.notify();
+      }, "E"),
+      button("Add to calendar", "primary", () => void createEvent(ev, ev.title, ""), "⏎"),
+    );
+  }
+
   function renderChoices(title: string, options: AssistReply & { kind: "choices" }) {
     cardEl.style.setProperty("--wash", "rgba(99,102,241,0.5)");
     who.replaceChildren(h("span", { text: title }));
@@ -190,6 +270,15 @@ export function buildCommand(actions: ViewActions): ViewHost {
         if (n >= 1 && n <= a.options.length) { swallow(); chosen = a.options[n - 1].card; State.notify(); }
         return;
       }
+      if (a.kind === "event" && phase.kind === "ask") {
+        if (e.key === "Enter") { swallow(); void createEvent(a.event, a.event.title, ""); }
+        else if (e.key.toLowerCase() === "e") {
+          swallow();
+          phase = { kind: "editEvent", title: a.event.title, when: inputValue(a.event.start, a.event.allDay) };
+          State.notify();
+        }
+        return;
+      }
       if (c && phase.kind === "ask") {
         if (e.key === "Enter") { swallow(); void run(false); }
         else if (e.key.toLowerCase() === "e") { swallow(); phase = { kind: "edit", text: c.command }; State.notify(); }
@@ -233,6 +322,11 @@ export function buildCommand(actions: ViewActions): ViewHost {
           break;
         case "prompt":
           renderPrompt(a.text);
+          break;
+        case "event":
+          renderEvent(a.event);
+          break;
+        case "open":
           break;
         case "note":
         case "done":

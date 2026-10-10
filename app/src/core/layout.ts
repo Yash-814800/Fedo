@@ -23,7 +23,8 @@ export type IslandViewName =
   | "settings"
   | "greeting"
   | "recap"
-  | "command";
+  | "command"
+  | "schedule";
 
 export type BotStateName =
   | "idle"
@@ -95,6 +96,8 @@ export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
   recap: { height: 184, botX: 62, botY: null, botDiameter: 58, agentMode: "column" },
   // The command card: the command, why, the risk, and the buttons.
   command: { height: 250, botX: 56, botY: null, botDiameter: 46, agentMode: "none" },
+  // Timers, reminders, deadlines and events with countdowns.
+  schedule: { height: 230, botX: 50, botY: null, botDiameter: 42, agentMode: "none" },
 };
 
 // The upload views above are only the fallback geometry. Once a file is actually

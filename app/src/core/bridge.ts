@@ -162,6 +162,13 @@ export const Bridge = {
   /** Runs a confirmed command: a new terminal window, or hidden when `inline` and Fedo calls it safe. */
   assistRun: (command: string, inline: boolean) => call<AssistRun>("assist_run", { command, inline }),
   assistCopy: (text: string) => call<boolean>("assist_copy", { text }),
+  /** Writes a confirmed event or deadline to GNOME Calendar and schedules its reminders. */
+  assistCreateEvent: (kind: string, title: string, start: number, end: number, allDay: boolean) =>
+    call<string>("assist_create_event", { kind, title, start, end, allDay }),
+  scheduleList: () => call<ScheduleItem[]>("schedule_list"),
+  schedulePause: (id: string) => call<boolean>("schedule_pause", { id }),
+  scheduleResume: (id: string) => call<boolean>("schedule_resume", { id }),
+  scheduleCancel: (id: string) => call<boolean>("schedule_cancel", { id }),
   /** A desktop notification (GNOME banner). False when no daemon took it. */
   notifyDone: (title: string, body: string) => call<boolean>("notify_done", { title, body }),
   /**
@@ -469,7 +476,39 @@ export type AssistReply =
   | { kind: "card"; card: AssistCard }
   | { kind: "choices"; title: string; options: AssistChoice[] }
   | { kind: "prompt"; text: string }
+  | { kind: "event"; event: AssistEvent }
+  | { kind: "open"; view: string }
   | { kind: "note"; text: string };
+
+export interface AssistEvent {
+  kind: "event" | "deadline";
+  title: string;
+  start: number;
+  end: number;
+  allDay: boolean;
+  when: string;
+  calendar: string;
+  reminders: { at: number; label: string }[];
+}
+
+export interface ScheduleItem {
+  id: string;
+  kind: "timer" | "reminder" | "deadline" | "event";
+  title: string;
+  /** Epoch seconds: when a timer/reminder fires, or a deadline/event is due. */
+  fireAt: number;
+  /** A paused timer: seconds left. */
+  pausedLeft: number | null;
+  total: number | null;
+  allDay: boolean;
+  eventUid: string | null;
+  parent: string | null;
+}
+
+export interface ScheduleFired {
+  item: ScheduleItem;
+  missed: boolean;
+}
 
 export interface AssistRun {
   ok: boolean;

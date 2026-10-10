@@ -11,6 +11,7 @@ import { createMiniBot, pruneMiniBots } from "../ghost/minibots";
 import { buildPrompt } from "./chat";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
 import { buildCommand } from "./command";
+import { buildSchedule, buildTimePill } from "./schedule";
 import { highlightRow, listRows, openRow } from "./github";
 import { pillDefinition, sessionSubtitle } from "../core/pills";
 import {
@@ -112,6 +113,9 @@ export function buildHeader(actions: ViewActions): ViewHost {
   // Plan usage pill (off by default): before the gear.
   const claudePill = buildPlanPill();
   const planPills = h("div", { class: "plan-pills" }, claudePill.el);
+  // The nearest running timer, counting down; opens the schedule.
+  const timePill = buildTimePill(() => go("schedule"));
+  const tabClock = h("button", { class: "tab", title: "Timers & deadlines", onclick: () => go("schedule") }, "◷");
 
   function go(v: IslandViewName) {
     actions.blip();
@@ -121,8 +125,8 @@ export function buildHeader(actions: ViewActions): ViewHost {
   const el = h(
     "div",
     { id: "header" },
-    h("div", { class: "tabs" }, tabHome, tabChat, tabDrop),
-    h("div", { class: "header-actions" }, planPills, gearBtn, soundBtn),
+    h("div", { class: "tabs" }, tabHome, tabChat, tabDrop, tabClock),
+    h("div", { class: "header-actions" }, timePill.el, planPills, gearBtn, soundBtn),
   );
   return {
     el,
@@ -131,6 +135,8 @@ export function buildHeader(actions: ViewActions): ViewHost {
       tabHome.classList.toggle("on", v === "overview" || v === "empty");
       tabChat.classList.toggle("on", v === "prompt");
       tabDrop.classList.toggle("on", v === "upload");
+      tabClock.classList.toggle("on", v === "schedule");
+      timePill.sync();
       gearBtn.classList.toggle("on", v === "settings");
       clear(gearBtn);
       gearBtn.append(svg(v === "settings" ? ICONS.gearFill : ICONS.gear, 14));
@@ -774,6 +780,7 @@ export function buildViews(
   map.set("choose", buildChoose(actions));
   map.set("recap", buildRecap(actions));
   map.set("command", buildCommand(actions));
+  map.set("schedule", buildSchedule(actions));
   // Not in the Windows v1: sending a file by email, window attach + web result.
   map.set("mail", buildPlaceholder(tl("Sending by email isn't in this version."), ""));
   map.set("searching", buildPlaceholder(tl("Claude is searching…"), ""));

@@ -2,7 +2,7 @@
 
 import type { BotEmoteName, BotStateName, IslandMode, IslandViewName } from "./layout";
 import type { EyeShape } from "../ghost/engine";
-import type { AssistReply } from "./bridge";
+import type { AssistReply, ScheduleItem } from "./bridge";
 import {
   DEFAULT_MAIN_PILL, HOST_OS, availablePills, orderPills, pillDefinition, sanitizeDeclared,
   toggleDeclared, type HostOs, type PillDefinition,
@@ -106,6 +106,9 @@ export interface Settings {
   webviewIdleSeconds: number;
   notifyOnDone: boolean;
   notifyAfterSeconds: number;
+  eventReminderMinutes: number;
+  deadlineReminderDays: number[];
+  deadlineMorningHour: number;
   /** Hovering the island opens it all the way (off: hovering only peeks). */
   openOnHover: boolean;
   absenceInterval: number;
@@ -149,6 +152,9 @@ export const DEFAULT_SETTINGS: Settings = {
   webviewIdleSeconds: 60,
   notifyOnDone: true,
   notifyAfterSeconds: 20,
+  eventReminderMinutes: 15,
+  deadlineReminderDays: [3, 1, 0],
+  deadlineMorningHour: 9,
   openOnHover: false,
   absenceInterval: 180,
   activeIntegrations: [],
@@ -202,6 +208,8 @@ class AppState {
   pendingApproval: ApprovalInfo | null = null;
   /** What the command card shows (set by the chat's router), or null. */
   assist: AssistReply | null = null;
+  /** Timers, reminders, deadlines (Rust scheduler.rs), refreshed on change. */
+  schedule: ScheduleItem[] = [];
   /** The chat bar is in "write me a prompt" mode. */
   promptMode = false;
   /** The pill that was in front when the card came up; it comes back after. */

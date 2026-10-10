@@ -67,6 +67,10 @@ pub enum Reply {
     Choices { title: String, options: Vec<Choice> },
     /// A rewritten prompt for Claude Code.
     Prompt { text: String },
+    /// An event or deadline to put in the calendar, for confirmation.
+    Event { event: crate::timeplan::EventCard },
+    /// Show one of the island's own views (the deadlines list).
+    Open { view: String },
     /// Nothing to run; just say it.
     Note { text: String },
 }
@@ -168,8 +172,8 @@ pub fn quote(s: &str) -> String {
 pub enum Fast {
     Mute(bool),
     Media(&'static str),
-    /// Phase 5.
-    Timer,
+    /// Timers, reminders, agenda, deadlines (timeplan.rs).
+    Time(crate::timeplan::Timed),
     /// Phase 6.
     Notifications,
     Install(String),
@@ -219,10 +223,8 @@ pub fn fast_path(text: &str) -> Option<Fast> {
         }
         _ => {}
     }
-    if (l.starts_with("timer ") || l.starts_with("set a timer") || l.starts_with("set timer") || l.starts_with("remind me"))
-        && (l.chars().any(|c| c.is_ascii_digit()) || l.contains(" a ") || l.contains(" an "))
-    {
-        return Some(Fast::Timer);
+    if let Some(t) = crate::timeplan::fast(text) {
+        return Some(Fast::Time(t));
     }
     for p in ["install ", "get me ", "i need ", "download "] {
         if let Some(rest) = l.strip_prefix(p) {
@@ -703,7 +705,7 @@ pub fn plan_card(plan: &FilePlan, home: &Path) -> Result<Card, String> {
 const ROUTER_SCHEMA: &str = r#"{
   "type": "object",
   "properties": {
-    "intent": {"type": "string", "enum": ["chat", "install", "kill", "files", "command", "prompt", "timer", "media", "mute", "notifications"]},
+    "intent": {"type": "string", "enum": ["chat", "install", "kill", "files", "command", "prompt", "timer", "reminder", "event", "deadline", "agenda", "media", "mute", "notifications"]},
     "args": {"type": "object"},
     "command": {"type": "string"},
     "explanation": {"type": "string"},
@@ -720,7 +722,11 @@ intent:\n\
 - files: copy, move, rename or organise the user's files and folders. args {\"task\": the request, verbatim}. No command.\n\
 - command: any other one-off system action that needs a shell command (disk usage, network info, restarting a service, changing a setting…). Put ONE command line in `command`; Fedora-correct; prefer read-only forms; no placeholders.\n\
 - prompt: the user wants their rough text rewritten as a clear prompt/instruction for Claude Code. args {\"text\": the rough text}.\n\
-- timer: set a timer or reminder. args {\"seconds\": number, \"label\": string}.\n\
+- timer: a countdown. args {\"seconds\": number, \"label\": string}.\n\
+- reminder: remind the user at a time. args {\"title\": what to remind, \"at\": \"YYYY-MM-DDTHH:MM\" local time, resolved from the current date and time given below}.\n\
+- event: put something on the calendar (a meeting, appointment, plan with a time). args {\"title\": short title without the date/time words, \"start\": \"YYYY-MM-DDTHH:MM\" local, \"end\": same format or omit, \"all_day\": true only if no time was given}. A bare weekday means the next one.\n\
+- deadline: something due by a date (\"apply before Oct 20\", \"submit by Friday\"). args {\"title\": what must be done, \"date\": \"YYYY-MM-DD\"}.\n\
+- agenda: asks what is on the calendar. args {\"days\": 0 for today, 1 for tomorrow, 7 for the week}.\n\
 - media: play, pause, skip or go back in music. args {\"action\": \"playPause\"|\"next\"|\"previous\"}.\n\
 - mute: mute or unmute Fedo's sounds. args {\"on\": boolean}.\n\
 - notifications: read or summarise the user's notifications or messages.\n\
@@ -861,7 +867,7 @@ fn route_blocking(app: &AppHandle, query: &str, prompt_mode: bool, fast_only: bo
                     Reply::Note { text: "Spotify isn't running, so there's nothing to control.".into() }
                 })
             }
-            Fast::Timer => Ok(Reply::Note { text: "Timers and reminders arrive in the next phase.".into() }),
+            Fast::Time(t) => time_fast(app, t),
             Fast::Notifications => Ok(Reply::Note { text: "Reading notifications arrives with phone & messages (Phase 6).".into() }),
             Fast::Install(name) => Ok(install_reply(&name, find_candidates(&name))),
             Fast::Kill(name, force) => Ok(kill_reply(&name, std::process::id(), force)),
@@ -872,7 +878,11 @@ fn route_blocking(app: &AppHandle, query: &str, prompt_mode: bool, fast_only: bo
     if fast_only {
         return Ok(Reply::Chat);
     }
-    let routed = claude_json(ROUTER_SYSTEM, query, ROUTER_SCHEMA, "haiku", None, &home, Duration::from_secs(45))?;
+    let system = format!(
+        "{ROUTER_SYSTEM}\nCurrent local date and time: {}.",
+        crate::calendar::now_for_prompt(crate::calendar::now())
+    );
+    let routed = claude_json(&system, query, ROUTER_SCHEMA, "haiku", None, &home, Duration::from_secs(45))?;
     dispatch(app, query, &routed, &home)
 }
 
@@ -897,7 +907,36 @@ fn dispatch(app: &AppHandle, query: &str, routed: &Value, home: &Path) -> Result
             Ok(Reply::Card { card: card(cmd.to_string(), expl, risk_of(routed), vec![]) })
         }
         "prompt" => write_prompt(&arg("text").unwrap_or_else(|| query.to_string()), home),
-        "timer" => Ok(Reply::Note { text: "Timers and reminders arrive in the next phase.".into() }),
+        "timer" => {
+            let s = routed["args"]["seconds"].as_f64().unwrap_or(0.0);
+            match (s >= 1.0 && s <= 86_400.0).then_some(s as i64) {
+                Some(secs) => time_fast(app, crate::timeplan::Timed::Timer { seconds: secs }),
+                None => Ok(Reply::Note { text: "How long should the timer run?".into() }),
+            }
+        }
+        "reminder" => {
+            let title = arg("title").unwrap_or_else(|| query.to_string());
+            match arg("at").and_then(|a| crate::calendar::parse_local(&a)) {
+                Some((at, _)) if at > crate::calendar::now() => {
+                    crate::scheduler::add_reminder(app, at, &title);
+                    Ok(Reply::Done { text: format!("I'll remind you {}: {title}", crate::calendar::describe(at, false)) })
+                }
+                _ => Ok(Reply::Note { text: "When should I remind you? (I couldn't work out a future time.)".into() }),
+            }
+        }
+        "event" | "deadline" => {
+            let kind = routed["intent"].as_str().unwrap_or("event");
+            event_reply(app, kind, routed)
+        }
+        "agenda" => {
+            let days = routed["args"]["days"].as_i64().unwrap_or(0).clamp(0, 31) as i32;
+            let label = match days {
+                0 => "today",
+                1 => "tomorrow",
+                _ => "the next few days",
+            };
+            agenda_reply(days, label)
+        }
         "notifications" => Ok(Reply::Note { text: "Reading notifications arrives with phone & messages (Phase 6).".into() }),
         "mute" => {
             let on = routed["args"]["on"].as_bool().unwrap_or(true);
@@ -919,6 +958,135 @@ fn dispatch(app: &AppHandle, query: &str, routed: &Value, home: &Path) -> Result
         }
         _ => Ok(Reply::Chat),
     }
+}
+
+/// What the user configured for reminders.
+fn time_prefs(app: &AppHandle) -> crate::timeplan::Prefs {
+    use tauri::Manager;
+    let s = app.state::<crate::Shared>().settings.lock().unwrap().clone();
+    crate::timeplan::Prefs {
+        event_minutes: s.event_reminder_minutes,
+        deadline_days: s.deadline_reminder_days,
+        morning_hour: s.deadline_morning_hour.min(23),
+    }
+}
+
+/// The time intents with nothing to confirm: they are started on the spot (a
+/// timer or reminder changes nothing on the machine, and can be cancelled in
+/// the island), or answered.
+fn time_fast(app: &AppHandle, t: crate::timeplan::Timed) -> Result<Reply, String> {
+    use crate::timeplan::{clock, Timed};
+    let now = crate::calendar::now();
+    match t {
+        Timed::Timer { seconds } => {
+            crate::scheduler::add_timer(app, seconds, "Timer");
+            Ok(Reply::Done { text: format!("Timer set for {}.", clock(seconds)) })
+        }
+        Timed::RemindIn { seconds, title } => {
+            crate::scheduler::add_reminder(app, now + seconds, &title);
+            Ok(Reply::Done { text: format!("I'll remind you in {}: {title}", clock(seconds)) })
+        }
+        Timed::Agenda { days, label } => agenda_reply(days, label),
+        Timed::Deadlines => Ok(Reply::Open { view: "schedule".into() }),
+    }
+}
+
+fn agenda_reply(days: i32, label: &str) -> Result<Reply, String> {
+    let now = crate::calendar::now();
+    let start = crate::calendar::day_start(now, 0);
+    let end = crate::calendar::day_start(now, days + 1);
+    let events = crate::calendar::events_between(start, end)?;
+    Ok(Reply::Note { text: crate::timeplan::agenda_text(label, &events) })
+}
+
+fn event_reply(app: &AppHandle, kind: &str, routed: &Value) -> Result<Reply, String> {
+    let a = &routed["args"];
+    let title = a["title"].as_str().map(str::trim).filter(|t| !t.is_empty());
+    let Some(title) = title else {
+        return Ok(Reply::Note { text: "What should I call it?".into() });
+    };
+    let now = crate::calendar::now();
+    let (start, all_day, end) = if kind == "deadline" {
+        match a["date"].as_str().and_then(crate::calendar::parse_local) {
+            Some((t, _)) => (t, true, None),
+            None => return Ok(Reply::Note { text: "I couldn't work out the date. Which day is it due?".into() }),
+        }
+    } else {
+        let all_day_flag = a["all_day"].as_bool().unwrap_or(false);
+        match a["start"].as_str().and_then(crate::calendar::parse_local) {
+            Some((t, date_only)) => {
+                let end = a["end"].as_str().and_then(crate::calendar::parse_local).map(|(e, _)| e);
+                (t, all_day_flag || date_only, end)
+            }
+            None => return Ok(Reply::Note { text: "I couldn't work out when. Which day and time?".into() }),
+        }
+    };
+    // Due today counts as the morning (the deadline is the whole day).
+    if start < crate::calendar::day_start(now, 0) {
+        return Ok(Reply::Note { text: format!("That date ({}) has already passed.", crate::calendar::describe(start, all_day)) });
+    }
+    let cal = crate::calendar::default_calendar_name().unwrap_or_else(|_| "your calendar".into());
+    Ok(Reply::Event { event: crate::timeplan::event_card(kind, title, start, end, all_day, &cal, &time_prefs(app), now) })
+}
+
+/// Writes a confirmed event or deadline to the calendar (with VALARMs) and
+/// hands Fedo's own scheduler the same reminders, so they fire even when
+/// Evolution's alarm notifier isn't running.
+pub fn create_event(app: &AppHandle, kind: &str, title: &str, start: i64, end: i64, all_day: bool) -> Result<String, String> {
+    use crate::scheduler::{Item, Kind, Scheduler};
+    use tauri::Manager;
+    let now = crate::calendar::now();
+    let p = time_prefs(app);
+    let kind = if kind == "deadline" { "deadline" } else { "event" };
+    let alarms = crate::timeplan::alarm_offsets(kind, start, all_day, &p);
+    let (uid, cal) = crate::calendar::create_event(title, start, end, all_day, &alarms, "Added by Fedo")?;
+    let plan = crate::timeplan::reminders(kind, start, all_day, &p, now);
+    let sched = app.state::<Scheduler>();
+    let n = plan.len();
+    sched.edit(|l| {
+        let parent = l.add(Item {
+            kind: if kind == "deadline" { Kind::Deadline } else { Kind::Event },
+            title: title.to_string(),
+            fire_at: start,
+            all_day,
+            event_uid: Some(uid.clone()),
+            ..Default::default()
+        });
+        for r in plan {
+            l.add(Item {
+                kind: Kind::Reminder,
+                title: crate::timeplan::reminder_text(kind, title, &r.label),
+                fire_at: r.at,
+                parent: Some(parent.clone()),
+                ..Default::default()
+            });
+        }
+    });
+    let _ = tauri::Emitter::emit(app, "schedule-changed", ());
+    Ok(format!(
+        "Added to {cal}: {} — {}. {n} reminder{} set; it'll show in GNOME Calendar.",
+        title,
+        crate::calendar::describe(start, all_day),
+        if n == 1 { "" } else { "s" }
+    ))
+}
+
+#[tauri::command]
+pub async fn assist_create_event(
+    app: AppHandle,
+    kind: String,
+    title: String,
+    start: i64,
+    end: i64,
+    all_day: bool,
+) -> Result<String, String> {
+    let title = title.trim().to_string();
+    if title.is_empty() || title.len() > 200 {
+        return Err("The event needs a title.".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || create_event(&app, &kind, &title, start, end, all_day))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 fn write_prompt(raw: &str, home: &Path) -> Result<Reply, String> {
@@ -1100,7 +1268,7 @@ mod tests {
         assert_eq!(fast_path("Install Visual Studio Code"), Some(Fast::Install("visual studio code".into())));
         assert_eq!(fast_path("kill vlc completely"), Some(Fast::Kill("vlc".into(), false)));
         assert_eq!(fast_path("force kill vlc"), Some(Fast::Kill("vlc".into(), true)));
-        assert_eq!(fast_path("timer 10 min"), Some(Fast::Timer));
+        assert_eq!(fast_path("timer 10 min"), Some(Fast::Time(crate::timeplan::Timed::Timer { seconds: 600 })));
         assert_eq!(fast_path("read my notifications"), Some(Fast::Notifications));
         assert_eq!(
             fast_path("rewrite this as a prompt: no the button is wrong"),
@@ -1301,5 +1469,26 @@ mod tests {
         let p = write_prompt("no what youre doing is wrong, the save button should be disabled while loading, you keep making it spin forever", &home);
         println!("{p:?}");
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    #[ignore]
+    fn live_time_intents() {
+        let home = std::env::temp_dir();
+        let system = format!(
+            "{ROUTER_SYSTEM}\nCurrent local date and time: {}.",
+            crate::calendar::now_for_prompt(crate::calendar::now())
+        );
+        for q in [
+            "Meeting with Riya Friday 4pm",
+            "I have to apply to Zomato before Oct 20, remind me",
+            "remind me at 6pm to call the bank",
+            "dentist appointment next Tuesday at 10:30 for an hour",
+            "set an egg timer for a quarter hour",
+            "what do I have on tomorrow",
+        ] {
+            let v = claude_json(&system, q, ROUTER_SCHEMA, "haiku", None, &home, Duration::from_secs(45)).unwrap();
+            println!("{q:?} -> {}", v);
+        }
     }
 }

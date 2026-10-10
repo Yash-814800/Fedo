@@ -3,6 +3,73 @@
 A running log of decisions, things verified on this machine, and known
 limitations, per `FEDO.md` rule 7. Newest phase first.
 
+## Phase 5 — timers, reminders, calendar, deadlines
+
+### What was built
+
+- **Scheduler** (`scheduler.rs`): one list in `~/.local/share/fedo/schedule.json`
+  (atomic write), one thread asleep on a `Condvar` until the next item is due —
+  no polling. Kinds: timer (pause keeps the time left, resume continues),
+  reminder, deadline and event (display entries with their reminders hanging
+  off them; cancelling a deadline cancels its reminders). Firing = island card +
+  `timer`/`reminder` sound + a GNOME banner (`notify.rs`), then the item is
+  removed. What fell due while Fedo was off fires at start, marked missed.
+- **Calendar** (`calendar.rs` + `helpers/fedo-calendar.py`, embedded): Evolution
+  Data Server (what GNOME Calendar uses) through its GObject bindings
+  (`gi` ECal/EDataServer, installed here) — create, range (recurrences
+  expanded), delete, list calendars. Events go to the default calendar
+  ("Personal"). Every event gets VALARMs **and** matching Fedo reminders.
+- **Time phrases** (`timeplan.rs`): no-model fast path for "timer 25 min",
+  "set a 5-minute timer", "remind me in 10 minutes to check the oven", "remind
+  me to X in 2 hours", "what's on today/tomorrow/this week", "deadlines". The
+  router (haiku, now told the current local date/time) handles the rest and
+  returns dates: "Meeting with Riya Friday 4pm" → event 2026-10-16T16:00;
+  "apply to Zomato before Oct 20, remind me" → deadline 2026-10-20; "remind me
+  at 6pm" (after 6pm → tomorrow); "set an egg timer for a quarter hour".
+- **Confirm before the calendar**: events and deadlines show a card (title,
+  "Fri 16 Oct, 4:00 pm", calendar, the reminders) — Enter adds, **E** edits
+  title/time, Esc cancels. Timers and reminders start immediately (they change
+  nothing on the machine and cancel in one click).
+- **Reminders**: events 15 min before (configurable); deadlines 3 days, 1 day,
+  and the morning of at 09:00 (configurable list and hour). Past times are
+  skipped. Settings → General has all three.
+- **Island**: a ◷ tab and a countdown pill in the header (nearest timer,
+  ticking each second only while visible); the schedule view lists timers
+  (pause/resume/cancel, live), deadlines with "in 10 d", reminders and
+  upcoming events. "deadlines" opens it.
+
+### Verified
+
+- **Evolution Data Server round trip, live**: event created with a VALARM in
+  "Personal" (the Python helper, then through the Rust wrapper), read back by
+  range, deleted. Test events were removed; nothing of mine is left in the
+  calendar. All-day events store `DTSTART;VALUE=DATE` and a VALARM per
+  reminder.
+- **Restart survival, live**: with the daemon stopped I wrote a schedule file
+  holding a reminder due in 25 s, an expired timer and a deadline, started the
+  daemon: the expired timer fired at start as missed, the reminder fired
+  25 s later (19:11:13), both left the file, the deadline stayed. Banners were
+  sent.
+- Router, live (haiku): the phrases above all came back with the right intent
+  and dates.
+- `cargo test --workspace` 190 pass (9 ignored live), `tsc`, `npm run build`;
+  the schedule list and the event card rendered in headless Chrome.
+
+### Not verified / known gaps
+
+- **Not driven in the real island** (typing "Meeting with Riya Friday 4pm",
+  Enter, seeing it in GNOME Calendar's window): the calendar write, plan and
+  scheduler were each exercised, and the event is the same EDS store GNOME
+  Calendar reads, but I did not open GNOME Calendar.
+- Sound on a fired reminder depends on the webview being allowed to play audio
+  without a user gesture after being rebuilt; the banner doesn't.
+- Timers fire a card in the island; no dedicated ghost emote yet.
+- Editing an existing event, snoozing, and recurring events are not done;
+  `agenda` reads recurrences expanded but I only exercised one-off events.
+- All-day reminder times use the local zone at creation; changing zone later
+  isn't re-planned.
+- The deadline countdown rounds by calendar day.
+
 ## Phase 4 — command assistant + prompt writer
 
 ### What was built

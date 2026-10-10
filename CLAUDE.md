@@ -42,6 +42,10 @@ limitations recorded as each phase lands.
   runners. `app/src/views/command.ts` is the card. **Nothing runs without the
   card's Enter / Run**; model-written command text for file tasks is never run
   (Fedo builds it from a validated plan).
+- `app/src-tauri/src/scheduler.rs` (timers/reminders/deadlines, persisted,
+  event-driven), `calendar.rs` (+ `helpers/fedo-calendar.py`, Evolution Data
+  Server) and `timeplan.rs` (time phrases, reminder plans). Writing to the
+  calendar always goes through the confirm card.
 - `app/src-tauri/src/chat.rs` — the chat: one `claude -p` run per turn
   (stream-json, `--resume` for follow-ups, read-only tools). `notify.rs` is
   the desktop notification; `unlock.rs` the Monday-unlock recap trigger.

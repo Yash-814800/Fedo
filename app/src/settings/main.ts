@@ -502,6 +502,29 @@ function generalSection(): HTMLElement {
     void save();
   });
 
+  const num = (value: number, min: number, max: number, apply: (n: number) => void) => {
+    const i = h("input", { type: "number", min: String(min), max: String(max), value: String(value), style: "width:64px" }) as HTMLInputElement;
+    i.addEventListener("change", () => {
+      const n = Math.max(min, Math.min(max, Math.round(Number(i.value) || 0)));
+      i.value = String(n);
+      apply(n);
+      void save();
+    });
+    return i;
+  };
+  const eventMinutes = num(settings.eventReminderMinutes, 0, 1440, (n) => { settings.eventReminderMinutes = n; });
+  const morningHour = num(settings.deadlineMorningHour, 0, 23, (n) => { settings.deadlineMorningHour = n; });
+  const deadlineDays = h("input", {
+    type: "text", value: settings.deadlineReminderDays.join(", "), style: "width:90px",
+  }) as HTMLInputElement;
+  deadlineDays.addEventListener("change", () => {
+    const days = deadlineDays.value
+      .split(/[ ,]+/).map((x) => Number(x)).filter((n) => Number.isInteger(n) && n >= 0 && n <= 60);
+    settings.deadlineReminderDays = [...new Set(days)].sort((a, b) => b - a);
+    deadlineDays.value = settings.deadlineReminderDays.join(", ");
+    void save();
+  });
+
   const screen = h("select", {}) as HTMLSelectElement;
   screen.append(
     h("option", { value: "primary", text: t("Main display") }),
@@ -549,6 +572,18 @@ function generalSection(): HTMLElement {
       toggle(settings.notifyOnDone, (v) => { settings.notifyOnDone = v; void save(); }),
       notifyAfter,
       h("span", { class: "hint", text: t("seconds or more, if the island isn't showing it") }),
+    ),
+    h("div", { class: "row" },
+      h("label", { text: "Event reminder" }),
+      eventMinutes,
+      h("span", { class: "hint", text: "minutes before an event (0 = none)" }),
+    ),
+    h("div", { class: "row" },
+      h("label", { text: "Deadline reminders" }),
+      deadlineDays,
+      h("span", { class: "hint", text: "days before (0 = the morning of), at" }),
+      morningHour,
+      h("span", { class: "hint", text: "o'clock" }),
     ),
     h("div", { class: "row" },
       h("label", { text: t("Auto-close") }),

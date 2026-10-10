@@ -14,6 +14,8 @@ import { APPROVAL_AGENTS, agentColor, agentName, validateAgent } from "./agents"
 import type { Island } from "./island";
 import { parseClaudePlan, restorePlanUsage } from "../core/plan";
 import { setClaudePlanUsage, storedClaudePlanUsage } from "../views/usage";
+import { refreshSchedule } from "../views/schedule";
+import type { ScheduleFired } from "../core/bridge";
 import { N_, t } from "../i18n/i18n";
 
 const CLAUDE_ID = "integration_claude";
@@ -232,6 +234,21 @@ export function registerHookHandlers(island: Island) {
   void onEvent<HookPayload>("hook", (payload) => handleHook(island, payload));
   // Plan windows seen by Fedo's own `claude -p` runs (the chat), shaped like
   // the status line's rate_limits.
+  // Timers, reminders and deadlines (scheduler.rs): keep the mirror fresh, and
+  // when one fires, wake up: the sound, and the card in the island.
+  refreshSchedule();
+  void onEvent<null>("schedule-changed", () => refreshSchedule());
+  void onEvent<ScheduleFired>("schedule-fired", ({ item, missed }) => {
+    Sound.play(item.kind === "timer" ? "timer" : "reminder");
+    const label = item.kind === "timer" ? "Timer done" : "Reminder";
+    State.assist = {
+      kind: "note",
+      text: `${label}: ${item.title}${missed ? " (it came due while Fedo was off)" : ""}`,
+    };
+    State.view = "command";
+    island.alert("command");
+    refreshSchedule();
+  });
   void onEvent<unknown>("plan-usage", (limits) => {
     const usage = parseClaudePlan(limits);
     if (usage) setClaudePlanUsage(usage);

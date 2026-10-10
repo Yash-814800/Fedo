@@ -119,9 +119,16 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
         State.stateOverride = null;
         State.promptMode = false;
         promptToggle.classList.remove("on");
+        if (routed.kind === "open") {
+          State.view = routed.view === "schedule" ? "schedule" : "overview";
+          sending = false;
+          State.notify();
+          onHeightChange();
+          return;
+        }
         State.assist = routed;
         State.view = "command";
-        Sound.play(routed.kind === "card" || routed.kind === "choices" ? "question" : "approve");
+        Sound.play(routed.kind === "card" || routed.kind === "choices" || routed.kind === "event" ? "question" : "approve");
         sending = false;
         State.notify();
         onHeightChange();

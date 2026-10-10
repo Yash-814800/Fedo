@@ -26,6 +26,12 @@ pub struct Settings {
     /// Hovering the island opens it all the way, and it folds again shortly
     /// after the pointer leaves (the Mac's "Open on hover"). Off by default.
     pub open_on_hover: bool,
+    /// Minutes before an event that Fedo (and its VALARM) reminds you.
+    pub event_reminder_minutes: u32,
+    /// Days before a deadline to remind you; 0 is the morning of.
+    pub deadline_reminder_days: Vec<u32>,
+    /// The hour (local) of the "N days before" and "morning of" reminders.
+    pub deadline_morning_hour: u32,
     pub absence_interval: f64,
     pub active_integrations: Vec<String>,
     /// The always-on workspace pill (src/core/pills.ts checks it is one).
@@ -87,6 +93,9 @@ impl Default for Settings {
             notify_on_done: true,
             notify_after_seconds: 20.0,
             open_on_hover: false,
+            event_reminder_minutes: 15,
+            deadline_reminder_days: vec![3, 1, 0],
+            deadline_morning_hour: 9,
             absence_interval: 180.0,
             active_integrations: Vec::new(),
             main_pill: "integration_claude".into(),
@@ -361,6 +370,9 @@ mod tests {
   "notifyOnDone": false,
   "notifyAfterSeconds": 5.0,
   "openOnHover": true,
+  "eventReminderMinutes": 30,
+  "deadlineReminderDays": [7, 2],
+  "deadlineMorningHour": 8,
   "absenceInterval": 60.0,
   "activeIntegrations": ["agent_antigravity"],
   "mainPill": "agent_antigravity",
@@ -739,6 +751,9 @@ mod tests {
                 "notifyOnDone",
                 "notifyAfterSeconds",
                 "openOnHover",
+                "eventReminderMinutes",
+                "deadlineReminderDays",
+                "deadlineMorningHour",
                 "absenceInterval",
                 "activeIntegrations",
                 "mainPill",

@@ -3,6 +3,7 @@
 mod agent_hooks;
 mod agents;
 mod assist;
+mod calendar;
 mod chat;
 mod config_file;
 mod dbus_service;
@@ -24,7 +25,9 @@ mod settings;
 mod shortcuts;
 mod sounds;
 mod notify;
+mod scheduler;
 mod spotify;
+mod timeplan;
 mod unlock;
 #[cfg(target_os = "linux")]
 mod stats;
@@ -641,6 +644,7 @@ pub fn run() {
         .manage(Chat::default())
         .manage(shortcuts::Registry::default())
         .manage(recap::load())
+        .manage(scheduler::Scheduler::load())
         .invoke_handler(tauri::generate_handler![
             boot,
             save_settings,
@@ -678,7 +682,12 @@ pub fn run() {
             assist::assist_route,
             assist::assist_run,
             assist::assist_copy,
+            assist::assist_create_event,
             notify::notify_done,
+            scheduler::schedule_list,
+            scheduler::schedule_pause,
+            scheduler::schedule_resume,
+            scheduler::schedule_cancel,
             ingest_file,
             open_settings_window,
             shortcuts_status,
@@ -725,6 +734,7 @@ pub fn run() {
             pipe::start(handle.clone());
             dbus_service::start(&handle);
             unlock::start(handle.clone());
+            scheduler::start(handle.clone());
             spotify::sync(&handle, &loaded.active_integrations);
             shortcuts::apply(&handle, &loaded.shortcuts);
             // Startup is a burst of one-off work (GTK, the tray, the portal);
