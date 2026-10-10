@@ -50,6 +50,10 @@ limitations recorded as each phase lands.
   `phoneplan.rs` (sentences) and `actions.rs` (call / SMS / WhatsApp / Gmail /
   send-to-phone cards and their executors). Nothing reaches a person or the
   phone without the card's Enter; `do_action` re-validates every parameter.
+- `app/src-tauri/src/spotify.rs` — the Spotify pill (MPRIS, event-driven) and
+  `play_uri`/`confirm_title` for "play X"; `assist.rs::play_song` does the
+  `claude -p` WebSearch lookup. Only ids matching a 22-char track id are ever
+  turned into a URI, and the playing title is checked before Fedo says so.
 - `app/src-tauri/src/chat.rs` — the chat: one `claude -p` run per turn
   (stream-json, `--resume` for follow-ups, read-only tools). `notify.rs` is
   the desktop notification; `unlock.rs` the Monday-unlock recap trigger.

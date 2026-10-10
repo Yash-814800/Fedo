@@ -70,6 +70,64 @@ args.
   --json-schema` guarantee is replaced by Ollama's schema-constrained output
   plus Fedo's own re-validation.
 
+## Phase 7 — Spotify pill + "play X"
+
+### What was built
+
+- **The pill was already there.** The Linux MPRIS port (`spotify.rs`: art,
+  title/artist, seek, play/pause, prev/next, shuffle, repeat, volume, event-
+  driven on `PropertiesChanged`/`NameOwnerChanged`, dance while playing)
+  landed in Phase 0/3 with a fake-player test harness. Phase 7 added no
+  pill code.
+- **"Play X".** `assist.rs::play_song`: `claude -p --model haiku
+  --allowedTools WebSearch --json-schema` finds the `open.spotify.com/track/<id>`
+  link; `spotify::track_id_from_link` accepts only that shape and the
+  `spotify:track:<id>` URI is *rebuilt* from the 22-char id (the model's text
+  never reaches the player); `spotify::play_uri` launches Spotify if it isn't
+  running (snap/flatpak/PATH launcher, not raised), waits on
+  `NameOwnerChanged` (≤30 s), then MPRIS `OpenUri`.
+- **Verification before "Playing…".** After `OpenUri`, `confirm_title` waits
+  (≤8 s, on `PropertiesChanged`) for Spotify's reported title to equal the one
+  the search named. If not, Fedo opens `spotify:search:<query>` and says so.
+- Triggers: fast path for "open spotify and play X", "play X on spotify",
+  "play X by Y"; a bare "play X" goes to the router (new `play` intent) so
+  "play minecraft" isn't a song search. "play"/"pause"/"resume" are unchanged.
+- With the local (Ollama) backend there are no tools, so no web search: it goes
+  straight to the `spotify:search:` fallback.
+
+### Verified on this machine
+
+- Spotify is the snap, MPRIS name `org.mpris.MediaPlayer2.spotify`,
+  `SupportedUriSchemes = [spotify]`; `OpenUri` on a track URI starts it
+  playing immediately.
+- `claude -p --allowedTools WebSearch` works headless (haiku, ~15–20 s, ~$0.05).
+- Live, against the running Spotify (`live_play_earrings`, ignored test):
+  "Earrings by Malcolm Todd" → track `0eAuGrXyGFYwur9ARUe7LJ` (confirmed
+  "Earrings" via Spotify's oEmbed) → MPRIS reports title "Earrings". 4 of 4
+  runs after the retry was added; before it, 1 of 3 fell back to search.
+- `cargo test --workspace` 220 + 36 pass; `npm test` 298 pass; `tsc` clean.
+
+### Found while verifying
+
+- **The model can return a real-looking track id that is another song.** The
+  first live run labelled the track "Earrings" but the id played "Accutane".
+  Hence the title check above; without it Fedo would have said "Playing
+  Earrings" over the wrong song.
+- The model sometimes answers with an `open.spotify.com/search/…` page. One
+  retry, told so, fixes most of these; otherwise the search fallback.
+
+### Not verified / limits
+
+- **Cold start (Spotify not running) was not run live** — Spotify was open and
+  I didn't quit the user's player to test it. The launch + wait-for-bus +
+  retry-`OpenUri` path is code-reviewed only (the launcher resolves to
+  `/var/lib/snapd/snap/bin/spotify` here).
+- The pill's UI was not re-inspected in the island this phase (no change to it);
+  it is covered by the existing MPRIS fake-player tests.
+- `spotify:search:` opens Spotify's search; it does not auto-play (by design).
+- Playing a song is not behind a confirm card — like pause/skip, it's the
+  request itself and changes no files or settings.
+
 ## Phase 6 — phone & messages (KDE Connect, ZapZap, Gmail)
 
 ### What was built

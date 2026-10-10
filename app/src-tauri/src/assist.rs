@@ -176,6 +176,8 @@ pub fn quote(s: &str) -> String {
 pub enum Fast {
     Mute(bool),
     Media(&'static str),
+    /// "Play <song> by <artist>": the words after "play", for Spotify.
+    Play(String),
     /// Timers, reminders, agenda, deadlines (timeplan.rs).
     Time(crate::timeplan::Timed),
     /// Phase 6.
@@ -196,6 +198,50 @@ fn program_name(s: &str) -> Option<String> {
         && s.len() <= 40
         && s.chars().all(|c| c.is_alphanumeric() || c == ' ' || matches!(c, '-' | '_' | '.' | '+'));
     ok.then(|| s.to_lowercase())
+}
+
+/// What to play in "open spotify and play X", "play X on spotify" or
+/// "play X by Y". A bare "play X" is left to the router: X may be a game or a
+/// video, not a song.
+pub fn play_request(text: &str) -> Option<String> {
+    let t = text.trim().trim_end_matches(['.', '!', '?']).trim();
+    let l = t.to_lowercase();
+    // Byte offsets in `l` match `t` only for ASCII; bail out otherwise.
+    if l.len() != t.len() {
+        return None;
+    }
+    let mut start = 0;
+    let mut spotify = false;
+    for lead in ["open spotify and ", "open spotify, ", "open spotify then ", "launch spotify and ", "start spotify and "] {
+        if l.starts_with(lead) {
+            start = lead.len();
+            spotify = true;
+            break;
+        }
+    }
+    let mut end = t.len();
+    for tail in [" on spotify", " in spotify", " with spotify", " using spotify"] {
+        if l.ends_with(tail) {
+            end = t.len() - tail.len();
+            spotify = true;
+            break;
+        }
+    }
+    let rest = t.get(start..end)?;
+    let rl = rest.to_lowercase();
+    let what = ["play me ", "play ", "put on "]
+        .iter()
+        .find_map(|p| rl.strip_prefix(p).map(|_| rest[p.len()..].trim()))?;
+    let what = what.trim_matches(|c| c == '"' || c == '\'' || c == '“' || c == '”').trim();
+    if what.is_empty() || what.len() > 120 {
+        return None;
+    }
+    let wl = what.to_lowercase();
+    if wl == "music" || wl == "spotify" || wl == "something" {
+        return None;
+    }
+    // Without "spotify" in the sentence, "by" is what says it is a song.
+    (spotify || wl.contains(" by ")).then(|| what.to_string())
 }
 
 pub fn fast_path(text: &str) -> Option<Fast> {
@@ -226,6 +272,9 @@ pub fn fast_path(text: &str) -> Option<Fast> {
             return Some(Fast::Notifications)
         }
         _ => {}
+    }
+    if let Some(what) = play_request(t) {
+        return Some(Fast::Play(what));
     }
     if let Some(t) = crate::timeplan::fast(text) {
         return Some(Fast::Time(t));
@@ -709,7 +758,7 @@ pub fn plan_card(plan: &FilePlan, home: &Path) -> Result<Card, String> {
 const ROUTER_SCHEMA: &str = r#"{
   "type": "object",
   "properties": {
-    "intent": {"type": "string", "enum": ["chat", "install", "kill", "files", "command", "prompt", "timer", "reminder", "event", "deadline", "agenda", "media", "mute", "notifications", "call", "sms", "whatsapp", "email"]},
+    "intent": {"type": "string", "enum": ["chat", "install", "kill", "files", "command", "prompt", "timer", "reminder", "event", "deadline", "agenda", "media", "play", "mute", "notifications", "call", "sms", "whatsapp", "email"]},
     "args": {"type": "object"},
     "command": {"type": "string"},
     "explanation": {"type": "string"},
@@ -731,7 +780,8 @@ intent:\n\
 - event: put something on the calendar (a meeting, appointment, plan with a time). args {\"title\": short title without the date/time words, \"start\": \"YYYY-MM-DDTHH:MM\" local, \"end\": same format or omit, \"all_day\": true only if no time was given}. A bare weekday means the next one.\n\
 - deadline: something due by a date (\"apply before Oct 20\", \"submit by Friday\"). args {\"title\": what must be done, \"date\": \"YYYY-MM-DD\"}.\n\
 - agenda: asks what is on the calendar. args {\"days\": 0 for today, 1 for tomorrow, 7 for the week}.\n\
-- media: play, pause, skip or go back in music. args {\"action\": \"playPause\"|\"next\"|\"previous\"}.\n\
+- media: pause, resume, skip or go back in music. args {\"action\": \"playPause\"|\"next\"|\"previous\"}.\n\
+- play: play a named song on Spotify (\"play Earrings by Malcolm Todd\"). args {\"query\": the song and artist as said}.\n\
 - mute: mute or unmute Fedo's sounds. args {\"on\": boolean}.\n\
 - notifications: read or summarise the user's phone notifications or messages.\n\
 - call: phone someone. args {\"name\": the contact}.\n\
@@ -932,6 +982,7 @@ fn route_blocking(
                     Reply::Note { text: "Spotify isn't running, so there's nothing to control.".into() }
                 })
             }
+            Fast::Play(what) => Ok(play_song(&what, &home)),
             Fast::Time(t) => time_fast(app, t),
             Fast::Notifications => Ok(phone_notifications()),
             Fast::Install(name) => Ok(install_reply(&name, find_candidates(&name))),
@@ -1041,6 +1092,10 @@ fn dispatch(
             };
             Ok(gmail_reply(&to, &subject, &body, if attach { file.as_deref() } else { None }))
         }
+        "play" => match arg("query") {
+            Some(q) => Ok(play_song(&q, home)),
+            None => Ok(Reply::Note { text: "Which song should I play?".into() }),
+        },
         "mute" => {
             let on = routed["args"]["on"].as_bool().unwrap_or(true);
             crate::set_sound_enabled(app, !on);
@@ -1060,6 +1115,76 @@ fn dispatch(
             })
         }
         _ => Ok(Reply::Chat),
+    }
+}
+
+// ── Play a song on Spotify ────────────────────────────────────────────────────
+
+const PLAY_SCHEMA: &str = r#"{
+  "type": "object",
+  "properties": {
+    "url": {"type": "string"},
+    "title": {"type": "string"},
+    "artist": {"type": "string"}
+  },
+  "required": ["url"]
+}"#;
+
+const PLAY_SYSTEM: &str = "You find the Spotify page of one song. Use the WebSearch tool to look for the song on open.spotify.com. \
+Reply with JSON only: {\"url\": the https://open.spotify.com/track/<id> link of the song, \"title\": its title, \"artist\": its main artist}. \
+Only answer with a track link you actually saw in a search result; never make an id up. If you cannot find it, answer {\"url\": \"\"}.";
+
+/// The Spotify track for "Earrings by Malcolm Todd": `claude -p` with WebSearch
+/// (no API keys). None when it found no real track link. The local model has no
+/// tools, so it never gets here (see `play_song`).
+fn find_track(query: &str, cwd: &Path) -> Option<(String, String, String)> {
+    // The model sometimes answers with a /search/ page; a second try, told so, usually finds the track.
+    let mut prompt = format!("Song to find on Spotify: {query}");
+    let mut found = None;
+    for attempt in 0..2 {
+        if let Ok(v) = claude_json(PLAY_SYSTEM, &prompt, PLAY_SCHEMA, "haiku", Some("WebSearch"), cwd, Duration::from_secs(90)) {
+            if let Some(id) = v["url"].as_str().and_then(crate::spotify::track_id_from_link) {
+                found = Some((id, v));
+                break;
+            }
+        }
+        if attempt == 0 {
+            prompt.push_str("\nYour last answer was not a https://open.spotify.com/track/<id> link. Search again for that exact track page.");
+        }
+    }
+    let (id, v) = found?;
+    let title = v["title"].as_str().map(str::trim).unwrap_or_default().to_string();
+    let label = match v["artist"].as_str().map(str::trim) {
+        Some(a) if !a.is_empty() && !title.is_empty() => format!("{title} by {a}"),
+        _ if !title.is_empty() => title.clone(),
+        _ => query.to_string(),
+    };
+    Some((id, title, label))
+}
+
+/// Looks the song up, starts Spotify if it isn't running and plays it. The
+/// track Spotify then reports must carry the title the search named; if it
+/// doesn't (the search can name a wrong id), or no track was found, Spotify's
+/// search page opens instead and the user presses play. Blocking.
+fn play_song(query: &str, cwd: &Path) -> Reply {
+    use crate::spotify::{confirm_title, play_uri, search_uri, track_uri, PlayOutcome};
+    let query = query.trim();
+    let found = if crate::llm::local().is_some() { None } else { find_track(query, cwd) };
+    let search = |why: String| match play_uri(&search_uri(query)) {
+        PlayOutcome::NotInstalled => Reply::Note { text: "Spotify isn't installed here.".into() },
+        PlayOutcome::Failed => Reply::Note { text: "Spotify didn't answer.".into() },
+        _ => Reply::Note { text: format!("{why} Spotify's search for “{query}” is open — press play on the one you want.") },
+    };
+    let Some((id, title, label)) = found else {
+        return search("I couldn't pin down the exact track.".into());
+    };
+    match play_uri(&track_uri(&id)) {
+        PlayOutcome::NotInstalled => Reply::Note { text: "Spotify isn't installed here.".into() },
+        PlayOutcome::Failed => Reply::Note { text: "I couldn't get Spotify to take that — it didn't answer.".into() },
+        _ if title.is_empty() || confirm_title(&title, Duration::from_secs(8)) => {
+            Reply::Done { text: format!("Playing {label}.") }
+        }
+        _ => search(format!("The track the search gave wasn't “{title}”, so I didn't trust it.")),
     }
 }
 
@@ -1548,6 +1673,17 @@ mod tests {
         assert_eq!(fast_path("Unmute sounds!"), Some(Fast::Mute(false)));
         assert_eq!(fast_path("pause the music"), Some(Fast::Media("playPause")));
         assert_eq!(fast_path("next song"), Some(Fast::Media("next")));
+        assert_eq!(
+            fast_path("Open Spotify and play Earrings by Malcolm Todd"),
+            Some(Fast::Play("Earrings by Malcolm Todd".into()))
+        );
+        assert_eq!(fast_path("play Earrings by Malcolm Todd"), Some(Fast::Play("Earrings by Malcolm Todd".into())));
+        assert_eq!(fast_path("play lofi beats on spotify."), Some(Fast::Play("lofi beats".into())));
+        // Plain pause/resume stay media controls; a bare "play X" is the router's call.
+        assert_eq!(fast_path("play"), Some(Fast::Media("playPause")));
+        assert_eq!(fast_path("play spotify"), Some(Fast::Media("playPause")));
+        assert_eq!(fast_path("play minecraft"), None);
+        assert_eq!(fast_path("open spotify and play music"), None);
         assert_eq!(fast_path("install obs"), Some(Fast::Install("obs".into())));
         assert_eq!(fast_path("Install Visual Studio Code"), Some(Fast::Install("visual studio code".into())));
         assert_eq!(fast_path("kill vlc completely"), Some(Fast::Kill("vlc".into(), false)));
@@ -1778,6 +1914,17 @@ mod tests {
 
     /// Scores local models on the router: `FEDO_EVAL_MODELS="a,b" cargo test -p fedo
     /// --lib eval_local_router -- --ignored --nocapture`.
+    /// Live: really looks the song up and plays it in the running Spotify.
+    /// `cargo test -p fedo --lib live_play -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn live_play_earrings() {
+        let home = crate::platform::home_dir();
+        let reply = play_song("Earrings by Malcolm Todd", &home);
+        println!("{reply:?}");
+        assert!(matches!(reply, Reply::Done { .. }), "{reply:?}");
+    }
+
     #[test]
     #[ignore]
     fn eval_local_router() {
@@ -1799,6 +1946,7 @@ mod tests {
             ("mail hr@x.com that I'm applying for the DS role", "email"),
             ("mute yourself", "mute"),
             ("go back to the previous song", "media"),
+            ("put on Blinding Lights, the weeknd's song", "play"),
             ("did anyone text me?", "notifications"),
             ("explain what a mutex is", "chat"),
             ("write a python function to reverse a string", "chat"),

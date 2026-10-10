@@ -432,6 +432,114 @@ fn emit_state(app: &AppHandle, state: &PlayerState) {
     let _ = app.emit_to(crate::island::WINDOW_LABEL, STATE_EVENT, state);
 }
 
+// ── "Play X": links, ids and URIs ─────────────────────────────────────────────
+
+/// A Spotify id is 22 base-62 characters.
+fn is_spotify_id(s: &str) -> bool {
+    s.len() == 22 && s.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+
+/// The track id in an `open.spotify.com/track/…` link (or a `spotify:track:`
+/// URI), nothing else. A model's answer only ever reaches the player through
+/// this: the URI is rebuilt from the id, never passed along.
+pub fn track_id_from_link(text: &str) -> Option<String> {
+    let t = text.trim();
+    if let Some(id) = t.strip_prefix("spotify:track:") {
+        return is_spotify_id(id).then(|| id.to_string());
+    }
+    let rest = t.strip_prefix("https://open.spotify.com/").or_else(|| t.strip_prefix("http://open.spotify.com/"))?;
+    // `intl-de/track/ID` is the same page in another language.
+    let mut parts = rest.split(['/', '?', '#']);
+    let mut first = parts.next()?;
+    if first.starts_with("intl-") {
+        first = parts.next()?;
+    }
+    if first != "track" {
+        return None;
+    }
+    let id = parts.next()?;
+    is_spotify_id(id).then(|| id.to_string())
+}
+
+pub fn track_uri(id: &str) -> String {
+    format!("spotify:track:{id}")
+}
+
+/// `spotify:search:<query>`, percent-encoded. Spotify opens its search page.
+pub fn search_uri(query: &str) -> String {
+    let mut out = String::from("spotify:search:");
+    for b in query.split_whitespace().collect::<Vec<_>>().join(" ").bytes() {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// A URI Fedo is willing to hand to Spotify's `OpenUri`.
+fn playable_uri(uri: &str) -> bool {
+    uri.strip_prefix("spotify:track:").is_some_and(is_spotify_id)
+        || uri.strip_prefix("spotify:search:").is_some_and(|q| {
+            !q.is_empty() && q.len() <= 300 && q.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.~%".contains(&b))
+        })
+}
+
+/// Titles compared the way a person would: case, punctuation and a
+/// " - Remastered 2011" tail don't matter.
+pub fn titles_match(expected: &str, actual: &str) -> bool {
+    fn norm(s: &str) -> String {
+        short_title(s).chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
+    }
+    let (e, a) = (norm(expected), norm(actual));
+    !e.is_empty() && e == a
+}
+
+/// Waits (on the bus, not on a timer) until Spotify's current track is titled
+/// `expected`, up to `limit`. A web search can name a real-looking id that is
+/// another song; this is how Fedo finds out before it says "Playing".
+pub fn confirm_title(expected: &str, limit: std::time::Duration) -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        linux::confirm_title(expected, limit)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (expected, limit);
+        false
+    }
+}
+
+/// What happened to a request to play something.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlayOutcome {
+    /// Spotify was running and has been handed the URI.
+    Sent,
+    /// Spotify had to be started first.
+    StartedAndSent,
+    NotInstalled,
+    /// Started but never answered, or refused the URI.
+    Failed,
+}
+
+/// Hands `uri` (a `spotify:track:` or `spotify:search:` URI) to Spotify over
+/// MPRIS `OpenUri`, starting Spotify first when it isn't running. Blocks for up
+/// to ~30 s while a cold Spotify comes up; call it off the UI thread.
+pub fn play_uri(uri: &str) -> PlayOutcome {
+    if !playable_uri(uri) {
+        return PlayOutcome::Failed;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        linux::play(uri)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        PlayOutcome::NotInstalled
+    }
+}
+
 // ── Commands ──────────────────────────────────────────────────────────────────
 
 /// The player as it is now, read again from Spotify (the card coming on
@@ -981,6 +1089,96 @@ mod linux {
         None
     }
 
+    /// Starts Spotify without raising it (`open` is the one that raises).
+    fn launch() -> bool {
+        let Some(argv) = launcher() else { return false };
+        use std::os::unix::process::CommandExt;
+        let mut cmd = Command::new(&argv[0]);
+        cmd.args(&argv[1..]).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).process_group(0);
+        match cmd.spawn() {
+            Ok(mut child) => {
+                let _ = std::thread::Builder::new().name("fedo-spotify-child".into()).spawn(move || {
+                    let _ = child.wait();
+                });
+                true
+            }
+            Err(err) => {
+                crate::log::line(format!("spotify: could not start it: {err}"));
+                false
+            }
+        }
+    }
+
+    /// Waits for Spotify to take its bus name, sleeping on NameOwnerChanged
+    /// rather than polling; the wait is bounded.
+    fn wait_for_spotify(limit: Duration) -> bool {
+        let Ok(conn) = Connection::new_session() else { return false };
+        let _ = conn.add_match_no_cb(RULES[0]);
+        let deadline = std::time::Instant::now() + limit;
+        loop {
+            if name_owner(&conn).is_some() {
+                return true;
+            }
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return false;
+            }
+            let _ = conn.process(left.min(Duration::from_secs(2)));
+        }
+    }
+
+    fn current_title(conn: &Connection) -> Option<String> {
+        let p = conn.with_proxy(BUS, PATH, CALL);
+        let map: PropMap = p.get(PLAYER, "Metadata").ok()?;
+        parse_metadata(&props_of(&map)).map(|t| t.title)
+    }
+
+    pub fn confirm_title(expected: &str, limit: Duration) -> bool {
+        let Ok(conn) = Connection::new_session() else { return false };
+        let _ = conn.add_match_no_cb(RULES[1]);
+        let deadline = std::time::Instant::now() + limit;
+        loop {
+            // The title comes from the property itself, so a change that
+            // landed before the match was added is not missed.
+            if current_title(&conn).is_some_and(|t| titles_match(expected, &t)) {
+                return true;
+            }
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return false;
+            }
+            let _ = conn.process(left.min(Duration::from_secs(1)));
+        }
+    }
+
+    pub fn play(uri: &str) -> PlayOutcome {
+        let running = with_control(|c| Ok(name_owner(c).is_some())).unwrap_or(false);
+        let mut started = false;
+        if !running {
+            if !launch() {
+                return PlayOutcome::NotInstalled;
+            }
+            started = true;
+            if !wait_for_spotify(Duration::from_secs(30)) {
+                return PlayOutcome::Failed;
+            }
+        }
+        // The name appears before the player answers; give a fresh start a few tries.
+        let tries = if started { 20 } else { 2 };
+        for attempt in 0..tries {
+            let sent = with_control(|c| {
+                c.with_proxy(BUS, PATH, Duration::from_secs(3)).method_call::<(), _, _, _>(PLAYER, "OpenUri", (uri,))
+            });
+            if sent.is_some() {
+                return if started { PlayOutcome::StartedAndSent } else { PlayOutcome::Sent };
+            }
+            if attempt + 1 < tries {
+                std::thread::sleep(Duration::from_millis(750));
+            }
+        }
+        PlayOutcome::Failed
+    }
+
     pub fn installed() -> bool {
         launcher().is_some()
     }
@@ -1365,6 +1563,42 @@ mod tests {
         assert_eq!(short_artist("Artist feat. Someone"), "Artist");
         assert_eq!(short_artist("Artist FT. Someone"), "Artist");
         assert_eq!(short_artist("Solo"), "Solo");
+    }
+
+    #[test]
+    fn links_become_track_ids_and_nothing_else_does() {
+        let id = "0eAuGrXyGFYwur9ARUe7LJ";
+        assert_eq!(track_id_from_link(&format!("https://open.spotify.com/track/{id}")).as_deref(), Some(id));
+        assert_eq!(track_id_from_link(&format!("https://open.spotify.com/track/{id}?si=abc123")).as_deref(), Some(id));
+        assert_eq!(track_id_from_link(&format!("https://open.spotify.com/intl-de/track/{id}")).as_deref(), Some(id));
+        assert_eq!(track_id_from_link(&format!("spotify:track:{id}")).as_deref(), Some(id));
+        // Albums, playlists, look-alike hosts, short ids and junk are refused.
+        assert_eq!(track_id_from_link(&format!("https://open.spotify.com/album/{id}")), None);
+        assert_eq!(track_id_from_link(&format!("https://open.spotify.com.evil.test/track/{id}")), None);
+        assert_eq!(track_id_from_link("https://open.spotify.com/track/short"), None);
+        assert_eq!(track_id_from_link(&format!("spotify:track:{id}; rm -rf ~")), None);
+        assert_eq!(track_id_from_link("not a link"), None);
+    }
+
+    #[test]
+    fn search_uris_are_encoded_and_only_safe_uris_are_playable() {
+        assert_eq!(search_uri("Earrings  Malcolm Todd"), "spotify:search:Earrings%20Malcolm%20Todd");
+        assert_eq!(search_uri("AC/DC & co"), "spotify:search:AC%2FDC%20%26%20co");
+        assert!(playable_uri(&search_uri("Earrings Malcolm Todd")));
+        assert!(playable_uri(&track_uri("0eAuGrXyGFYwur9ARUe7LJ")));
+        assert!(!playable_uri("spotify:track:short"));
+        assert!(!playable_uri("spotify:search:"));
+        assert!(!playable_uri("https://example.com"));
+        assert!(!playable_uri("spotify:search:a b"));
+    }
+
+    #[test]
+    fn titles_match_loosely_but_not_across_songs() {
+        assert!(titles_match("Earrings", "earrings"));
+        assert!(titles_match("Get Lucky", "Get Lucky - Radio Edit"));
+        assert!(titles_match("Don't Stop Me Now", "Dont Stop Me Now (Remastered 2011)"));
+        assert!(!titles_match("Earrings", "Accutane"));
+        assert!(!titles_match("", ""));
     }
 
     #[test]
