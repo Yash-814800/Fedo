@@ -51,7 +51,7 @@ test("a chat answer streams into one reply, then the finished text replaces it",
   let finish;
   answers.chat_send = () => new Promise((resolve) => (finish = resolve));
   await type("hello");
-  assert.deepEqual(sent("assist_route"), [{ query: "hello", promptMode: false, fastOnly: false }]);
+  assert.deepEqual(sent("assist_route"), [{ query: "hello", promptMode: false, fastOnly: false, file: null }]);
   assert.ok($(".typing"), "dots until the first visible text");
 
   emit("chat-delta", ""); // still thinking
@@ -102,7 +102,7 @@ test("the Prompt button sends the text to the prompt writer", async () => {
   $(".prompt-toggle").fire("click");
   assert.equal(State.promptMode, true);
   await type("no the button is wrong");
-  assert.deepEqual(sent("assist_route"), [{ query: "no the button is wrong", promptMode: true, fastOnly: false }]);
+  assert.deepEqual(sent("assist_route"), [{ query: "no the button is wrong", promptMode: true, fastOnly: false, file: null }]);
   assert.deepEqual(State.assist, { kind: "prompt", text: "Fix the button." });
   assert.equal(State.promptMode, false);
 });
@@ -126,4 +126,32 @@ test("a router that fails must not take the chat down with it", async () => {
   await flush();
   assert.deepEqual(sent("chat_send").length, 1);
   assert.deepEqual(State.chatHistory.map((m) => m.content), ["hello", "still here"]);
+});
+
+test("the dropped file goes to the router, so \"send it to my phone\" knows which", async () => {
+  State.droppedFile = { name: "cv.pdf", path: "/inbox/cv.pdf", size: 10 };
+  answers.assist_route = { kind: "chat" };
+  answers.chat_send = { text: "ok" };
+  await type("send this to my phone");
+  assert.deepEqual(sent("assist_route")[0].file, { name: "cv.pdf", path: "/inbox/cv.pdf" });
+});
+
+test("a call, SMS or WhatsApp card is a confirmation, never an action taken", async () => {
+  const action = {
+    kind: "sms", title: "Text Aparna", lines: ["To Aparna · +91…", "“On my way”"],
+    note: "Sent as an SMS from your phone, right away.", warning: null, params: { number: "+91…" },
+  };
+  answers.assist_route = { kind: "action", action };
+  await type("text Aparna On my way");
+  assert.equal(State.view, "command");
+  assert.deepEqual(State.assist, { kind: "action", action });
+  assert.deepEqual(sent("assist_do"), [], "nothing is sent until Enter on the card");
+  assert.deepEqual(sent("chat_send"), []);
+});
+
+test("a card that asked 'to whom?' fills the input", () => {
+  State.chatPrefill = "Send it via ZapZap to ";
+  view.sync();
+  assert.equal($(".chat-input").value, "Send it via ZapZap to ");
+  assert.equal(State.chatPrefill, null);
 });

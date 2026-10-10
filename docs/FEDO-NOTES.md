@@ -3,6 +3,97 @@
 A running log of decisions, things verified on this machine, and known
 limitations, per `FEDO.md` rule 7. Newest phase first.
 
+## Phase 6 — phone & messages (KDE Connect, ZapZap, Gmail)
+
+### What was built
+
+- **Contacts** (`contacts.rs`): the 836 vCards KDE Connect keeps in
+  `~/.local/share/kpeoplevcard/` are read (v2.1, quoted-printable names,
+  duplicates folded) into an in-memory index, cached until the folder changes.
+  Fuzzy matching: whole name, whole words, word prefixes, one typo per word;
+  shorter names win ties; an exact name that nothing else equals is "the one",
+  otherwise Fedo asks ("Pulkit Sharma" / "Pulkit Dad"; two numbers → pick one).
+  The same number written twice ("+91 98115 18797", "09811518797") is one choice.
+- **KDE Connect** (`phone.rs`): devices and their pairing/reachability over
+  `org.kde.kdeconnect` D-Bus; the phone's active notifications
+  (`…device.notifications`); signals `notificationPosted` and `callReceived`
+  feed a listener that peeks the island (Settings → General → Phone alerts:
+  on, for apps containing Phone / Dialer / Messages / WhatsApp by default).
+  Actions go through `kdeconnect-cli`, arguments passed one by one, never a
+  shell: `--share tel:+…` (dialer), `--send-sms … --destination …`,
+  `--share <file>`.
+- **Sentences** (`phoneplan.rs`, no model): "call Pulkit", "text Aparna I'll be
+  right there", "open zapzap and text Aparna …", "whatsapp mom: dinner at 8",
+  "text X … via whatsapp", "send this to my phone", "send it via zapzap to X",
+  "send it via gmail to a@b.com", "read my notifications". The name is told
+  from the message by asking the address book which leading words are a
+  contact (whole-word matches only). The router (haiku) gained call / sms /
+  whatsapp / email, and drafts an email's subject and body with Claude when
+  you give an instruction ("mail this resume to hr@x.com, say I'm applying
+  for the DS role").
+- **Cards** (`actions.rs`): every one of these is a confirm card — who, which
+  number, the message, a note (Android may need one tap on Call) — and nothing
+  is done until **Enter / Do it**. `do_action` re-checks every parameter: a
+  number is digits, WhatsApp digits are 7–15, an email address is plain, a file
+  must be one of Fedo's own inbox copies, the device must be paired *and
+  reachable right now* (never quietly a different phone), and an unknown kind
+  is refused.
+- **ZapZap**: `whatsapp://send?phone=<digits>&text=<encoded>` through
+  `xdg-open` (ZapZap is this machine's handler for the scheme). Local numbers
+  need a country code: Settings → Country code, or from the time zone
+  (Asia/Kolkata → 91); without one the card says so and has no Do-it button.
+- **Gmail**: `https://mail.google.com/mail/?view=cm&fs=1&to=…&su=…&body=…` in
+  the default browser. With a dropped file: Files opens with it selected
+  (`nautilus --select`) and it is on the clipboard as a copied file
+  (`wl-copy --type x-special/gnome-copied-files`), so attaching is a paste or a
+  drag.
+- **Dropped file**: the choose card's Gmail / ZapZap / Phone buttons are live:
+  they put "Send it via Gmail to " / "… ZapZap to " / "Send this to my phone"
+  in the chat input; the assistant turns the sentence into the card.
+
+### Verified on this machine
+
+- **Both phones are, today, unusable, and Fedo says exactly why**: "OnePlus 11R
+  5G is paired but not on the network. Pixel 9 Pro XL is on the network but
+  not paired — pair it in KDE Connect." (read live from the daemon).
+- The address book loads (836 cards) and the real names "Pulkit", "Aparna",
+  "Mom" are found; the real vCards include four Aparnas, which is the
+  ambiguity case the picker handles.
+- **ZapZap**: running the card launched
+  `zapzap whatsapp://send?phone=919999999999&text=Fedo%20test%20-%20do%20not%20send`
+  (ZapZap's own source accepts `whatsapp://` and `wa.me` deep links and opens
+  them in the chat; I did not see the window, so "text prefilled" is from its
+  code, not from my eyes).
+- **Gmail + file**: the compose URL opened, Files was told to select the file,
+  and the clipboard held `copy\nfile:///…/fedo-live-test.txt`.
+- The KDE Connect plugin method names (`shareUrl`, `sendSms`,
+  `activeNotifications`, `notificationPosted`, `callReceived`, …) were
+  confirmed against the installed plugin libraries.
+- `cargo test --workspace` 211 pass (10 ignored live), `npm test` 298 pass,
+  `tsc` clean.
+
+### Not verified / honest limits
+
+- **Nothing that needs a reachable phone could be run** — call, SMS, send to
+  phone, reading notifications, the notification/call peek — because neither
+  phone is reachable-and-paired right now. They are written against KDE
+  Connect's documented D-Bus API and CLI, checked against the installed
+  plugins' method names, and unit-tested for parameters and refusals; the
+  first real run is yours: pair the Pixel (or bring the OnePlus on the network)
+  and say "call Pulkit".
+- **"Call" is "open the dialer"**: KDE Connect has no dial method; it shares a
+  `tel:` link and Android opens the dialer — expect one tap on Call. The card
+  says so.
+- **"Send it" by voice into ZapZap** is not done: there is no reliable way
+  without `ydotool`/uinput (not installed, needs setup). Fedo only prefills;
+  you press Enter. When voice arrives (Phase 8) this stays the rule unless you
+  opt in to a uinput helper.
+- **Dropped file to ZapZap** is clipboard + open chat (paste with Ctrl+V); I
+  did not find a direct way to hand ZapZap a file.
+- Reply-to-notification and reading the phone's conversations are not built.
+- Test windows I opened on your desktop (ZapZap, a Gmail tab, Files) were left
+  open; the test file was removed.
+
 ## Verification pass after Phase 5 (before Phase 6)
 
 Done to make sure Phases 0–5 really work, with the shipped artefact rather

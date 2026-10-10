@@ -71,6 +71,10 @@ pub enum Reply {
     Event { event: crate::timeplan::EventCard },
     /// Show one of the island's own views (the deadlines list).
     Open { view: String },
+    /// A call, SMS, WhatsApp, Gmail or file send, for confirmation.
+    Action { action: crate::actions::Action },
+    /// Which person / number / address.
+    ActionChoices { title: String, options: Vec<crate::actions::ActionChoice> },
     /// Nothing to run; just say it.
     Note { text: String },
 }
@@ -705,7 +709,7 @@ pub fn plan_card(plan: &FilePlan, home: &Path) -> Result<Card, String> {
 const ROUTER_SCHEMA: &str = r#"{
   "type": "object",
   "properties": {
-    "intent": {"type": "string", "enum": ["chat", "install", "kill", "files", "command", "prompt", "timer", "reminder", "event", "deadline", "agenda", "media", "mute", "notifications"]},
+    "intent": {"type": "string", "enum": ["chat", "install", "kill", "files", "command", "prompt", "timer", "reminder", "event", "deadline", "agenda", "media", "mute", "notifications", "call", "sms", "whatsapp", "email"]},
     "args": {"type": "object"},
     "command": {"type": "string"},
     "explanation": {"type": "string"},
@@ -729,7 +733,11 @@ intent:\n\
 - agenda: asks what is on the calendar. args {\"days\": 0 for today, 1 for tomorrow, 7 for the week}.\n\
 - media: play, pause, skip or go back in music. args {\"action\": \"playPause\"|\"next\"|\"previous\"}.\n\
 - mute: mute or unmute Fedo's sounds. args {\"on\": boolean}.\n\
-- notifications: read or summarise the user's notifications or messages.\n\
+- notifications: read or summarise the user's phone notifications or messages.\n\
+- call: phone someone. args {\"name\": the contact}.\n\
+- sms: send an SMS. args {\"name\": the contact, \"message\": the text to send}.\n\
+- whatsapp: send a WhatsApp message. args {\"name\": the contact, \"message\": the text}.\n\
+- email: compose an email. args {\"to\": address or contact name, \"subject\": optional, \"body\": optional, \"instruction\": what the email should say, in the user's words, \"attach\": true if they mean the file they dropped}.\n\
 - chat: anything else — questions, explanations, writing, coding help, conversation. Use chat when unsure.\n\
 explanation: one short sentence. risk: how harmful the action could be if it ran (safe = read-only or trivially reversible; careful = changes the system or installs/removes software; dangerous = can destroy data or break the session).";
 
@@ -841,17 +849,37 @@ fn risk_of(v: &Value) -> Risk {
 /// A chat message the assistant handles, or `Reply::Chat`. `prompt_mode`
 /// skips the router: the text is rewritten as a prompt (the prompt writer's
 /// own button).
-pub async fn route(app: &AppHandle, query: String, prompt_mode: bool, fast_only: bool) -> Result<Reply, String> {
+pub async fn route(
+    app: &AppHandle,
+    query: String,
+    prompt_mode: bool,
+    fast_only: bool,
+    file: Option<DroppedRef>,
+) -> Result<Reply, String> {
     let app = app.clone();
-    tauri::async_runtime::spawn_blocking(move || route_blocking(&app, &query, prompt_mode, fast_only))
+    tauri::async_runtime::spawn_blocking(move || route_blocking(&app, &query, prompt_mode, fast_only, file.as_ref()))
         .await
         .map_err(|e| e.to_string())?
 }
 
-fn route_blocking(app: &AppHandle, query: &str, prompt_mode: bool, fast_only: bool) -> Result<Reply, String> {
+fn route_blocking(
+    app: &AppHandle,
+    query: &str,
+    prompt_mode: bool,
+    fast_only: bool,
+    dropped: Option<&DroppedRef>,
+) -> Result<Reply, String> {
     let home = crate::platform::home_dir();
     if prompt_mode {
         return write_prompt(query, &home);
+    }
+    // The phone and messages: names are told from the message by the address book.
+    {
+        let all = crate::contacts::all();
+        let has = |n: &str| all.iter().any(|c| crate::contacts::score(n, &c.name) >= 80);
+        if let Some(p) = crate::phoneplan::fast(query, &has) {
+            return Ok(phone_fast(app, p, &all, dropped));
+        }
     }
     if let Some(fast) = fast_path(query) {
         return match fast {
@@ -868,7 +896,7 @@ fn route_blocking(app: &AppHandle, query: &str, prompt_mode: bool, fast_only: bo
                 })
             }
             Fast::Time(t) => time_fast(app, t),
-            Fast::Notifications => Ok(Reply::Note { text: "Reading notifications arrives with phone & messages (Phase 6).".into() }),
+            Fast::Notifications => Ok(phone_notifications()),
             Fast::Install(name) => Ok(install_reply(&name, find_candidates(&name))),
             Fast::Kill(name, force) => Ok(kill_reply(&name, std::process::id(), force)),
             Fast::PromptRewrite(text) => write_prompt(&text, &home),
@@ -883,11 +911,17 @@ fn route_blocking(app: &AppHandle, query: &str, prompt_mode: bool, fast_only: bo
         crate::calendar::now_for_prompt(crate::calendar::now())
     );
     let routed = claude_json(&system, query, ROUTER_SCHEMA, "haiku", None, &home, Duration::from_secs(45))?;
-    dispatch(app, query, &routed, &home)
+    dispatch(app, query, &routed, &home, dropped)
 }
 
 /// What a routed intent does. Public for tests with a fake model answer.
-fn dispatch(app: &AppHandle, query: &str, routed: &Value, home: &Path) -> Result<Reply, String> {
+fn dispatch(
+    app: &AppHandle,
+    query: &str,
+    routed: &Value,
+    home: &Path,
+    dropped: Option<&DroppedRef>,
+) -> Result<Reply, String> {
     let arg = |k: &str| routed["args"][k].as_str().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
     match routed["intent"].as_str().unwrap_or("chat") {
         "install" => match arg("name").and_then(|n| program_name(&n)) {
@@ -937,7 +971,36 @@ fn dispatch(app: &AppHandle, query: &str, routed: &Value, home: &Path) -> Result
             };
             agenda_reply(days, label)
         }
-        "notifications" => Ok(Reply::Note { text: "Reading notifications arrives with phone & messages (Phase 6).".into() }),
+        "notifications" => Ok(phone_notifications()),
+        "call" => match arg("name") {
+            Some(n) => Ok(phone_call(&n)),
+            None => Ok(Reply::Note { text: "Who should I call?".into() }),
+        },
+        "sms" | "whatsapp" => {
+            let ch = if routed["intent"] == "sms" {
+                crate::phoneplan::Channel::Sms
+            } else {
+                crate::phoneplan::Channel::WhatsApp
+            };
+            match (arg("name"), arg("message")) {
+                (Some(n), Some(m)) => Ok(phone_text(app, &n, &m, ch)),
+                _ => Ok(Reply::Note { text: "Who should I message, and what should it say?".into() }),
+            }
+        }
+        "email" => {
+            let file = dropped.map(|f| f.path.clone());
+            let attach = routed["args"]["attach"].as_bool().unwrap_or(false) || file.is_some();
+            let to = arg("to").or_else(|| arg("name")).unwrap_or_default();
+            if to.is_empty() {
+                return Ok(Reply::Note { text: "Who should the email go to?".into() });
+            }
+            let (subject, body) = match (arg("subject"), arg("body")) {
+                (Some(s), Some(b)) => (s, b),
+                _ => draft_email(arg("instruction").as_deref().unwrap_or(query), &home_for_draft())
+                    .unwrap_or_else(|_| (arg("subject").unwrap_or_default(), arg("body").unwrap_or_default())),
+            };
+            Ok(gmail_reply(&to, &subject, &body, if attach { file.as_deref() } else { None }))
+        }
         "mute" => {
             let on = routed["args"]["on"].as_bool().unwrap_or(true);
             crate::set_sound_enabled(app, !on);
@@ -1089,6 +1152,105 @@ pub async fn assist_create_event(
         .map_err(|e| e.to_string())?
 }
 
+/// What the file the user dropped is (the page names it; the inbox check is in actions.rs).
+#[derive(Debug, Clone, Deserialize)]
+pub struct DroppedRef {
+    pub name: String,
+    pub path: String,
+}
+
+fn built(b: Result<crate::actions::Built, String>) -> Reply {
+    match b {
+        Ok(crate::actions::Built::One(action)) => Reply::Action { action },
+        Ok(crate::actions::Built::Choose(title, options)) => Reply::ActionChoices { title, options },
+        Ok(crate::actions::Built::Say(text)) => Reply::Note { text },
+        Err(text) => Reply::Note { text },
+    }
+}
+
+fn cc_setting(app: &AppHandle) -> String {
+    use tauri::Manager;
+    app.state::<crate::Shared>().settings.lock().unwrap().phone_country_code.clone()
+}
+
+fn phone_notifications() -> Reply {
+    match crate::phone::usable_device().and_then(|d| crate::phone::notifications(&d.id)) {
+        Ok(list) => Reply::Note { text: crate::phone::describe(&list) },
+        Err(why) => Reply::Note { text: why },
+    }
+}
+
+fn phone_call(who: &str) -> Reply {
+    let all = crate::contacts::all();
+    match crate::phone::usable_device() {
+        Ok(dev) => built(crate::actions::build_call(who, &all, &dev)),
+        Err(why) => Reply::Note { text: why },
+    }
+}
+
+fn phone_text(app: &AppHandle, who: &str, message: &str, ch: crate::phoneplan::Channel) -> Reply {
+    let all = crate::contacts::all();
+    let dev = crate::phone::usable_device();
+    built(match (&dev, ch) {
+        (Err(why), crate::phoneplan::Channel::Sms) => Err(why.clone()),
+        _ => crate::actions::build_text(who, message, ch, &all, dev.as_ref().ok(), &cc_setting(app)),
+    })
+}
+
+fn gmail_reply(to: &str, subject: &str, body: &str, file: Option<&str>) -> Reply {
+    built(crate::actions::build_gmail(to, subject, body, file, &crate::contacts::all()))
+}
+
+fn home_for_draft() -> std::path::PathBuf {
+    crate::platform::home_dir()
+}
+
+const EMAIL_SYSTEM: &str = "You draft a short, polite, professional email for the user from their instruction. \
+Reply with JSON only: {\"subject\": a clear subject line, \"body\": the email body, plain text, greeting and sign-off included but no name invented}. \
+Say only what the user's instruction supports; do not invent facts, dates, or qualifications. If a file is attached, you may mention it is attached.";
+
+const EMAIL_SCHEMA: &str = r#"{"type":"object","properties":{"subject":{"type":"string"},"body":{"type":"string"}},"required":["subject","body"]}"#;
+
+fn draft_email(instruction: &str, home: &Path) -> Result<(String, String), String> {
+    let v = claude_json(EMAIL_SYSTEM, instruction, EMAIL_SCHEMA, "sonnet", None, home, Duration::from_secs(60))?;
+    Ok((
+        v["subject"].as_str().unwrap_or_default().trim().to_string(),
+        v["body"].as_str().unwrap_or_default().trim().to_string(),
+    ))
+}
+
+fn phone_fast(app: &AppHandle, p: crate::phoneplan::PhoneFast, all: &[crate::contacts::Contact], dropped: Option<&DroppedRef>) -> Reply {
+    use crate::phoneplan::{PhoneFast, Via};
+    match p {
+        PhoneFast::Notifications => phone_notifications(),
+        PhoneFast::Call { who } => phone_call(&who),
+        PhoneFast::Text { who, message, channel } => phone_text(app, &who, &message, channel),
+        PhoneFast::SendFile { via, who } => {
+            let Some(f) = dropped else {
+                return Reply::Note { text: "Drop a file on the island first, then tell me where to send it.".into() };
+            };
+            match via {
+                Via::Phone => match crate::phone::usable_device() {
+                    Ok(dev) => built(crate::actions::build_share_phone(&f.path, &dev)),
+                    Err(why) => Reply::Note { text: why },
+                },
+                Via::WhatsApp => built(crate::actions::build_whatsapp_file(who.as_deref(), &f.path, all, &cc_setting(app))),
+                Via::Gmail => match who {
+                    Some(to) => gmail_reply(&to, "", "", Some(&f.path)),
+                    None => Reply::Note { text: "Who should I email it to?".into() },
+                },
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn assist_do(action: crate::actions::Action) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::actions::do_action(&action))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 fn write_prompt(raw: &str, home: &Path) -> Result<Reply, String> {
     let raw = raw.trim();
     if raw.is_empty() {
@@ -1228,8 +1390,14 @@ pub fn copy_text(text: &str) -> bool {
 }
 
 #[tauri::command]
-pub async fn assist_route(app: AppHandle, query: String, prompt_mode: bool, fast_only: bool) -> Result<Reply, String> {
-    route(&app, query, prompt_mode, fast_only).await
+pub async fn assist_route(
+    app: AppHandle,
+    query: String,
+    prompt_mode: bool,
+    fast_only: bool,
+    file: Option<DroppedRef>,
+) -> Result<Reply, String> {
+    route(&app, query, prompt_mode, fast_only, file).await
 }
 
 /// `inline` is honoured only when Fedo's own rules call the command safe.

@@ -106,6 +106,9 @@ export interface Settings {
   webviewIdleSeconds: number;
   notifyOnDone: boolean;
   notifyAfterSeconds: number;
+  phoneNotify: boolean;
+  phoneNotifyApps: string[];
+  phoneCountryCode: string;
   eventReminderMinutes: number;
   deadlineReminderDays: number[];
   deadlineMorningHour: number;
@@ -152,6 +155,9 @@ export const DEFAULT_SETTINGS: Settings = {
   webviewIdleSeconds: 60,
   notifyOnDone: true,
   notifyAfterSeconds: 20,
+  phoneNotify: true,
+  phoneNotifyApps: ["Phone", "Dialer", "Messages", "WhatsApp"],
+  phoneCountryCode: "",
   eventReminderMinutes: 15,
   deadlineReminderDays: [3, 1, 0],
   deadlineMorningHour: 9,
@@ -212,6 +218,8 @@ class AppState {
   schedule: ScheduleItem[] = [];
   /** The chat bar is in "write me a prompt" mode. */
   promptMode = false;
+  /** Text the chat input should start with (a card asked "to whom?"). */
+  chatPrefill: string | null = null;
   /** The pill that was in front when the card came up; it comes back after. */
   focusBeforeApproval: string | null = null;
 

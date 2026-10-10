@@ -15,7 +15,7 @@ import type { Island } from "./island";
 import { parseClaudePlan, restorePlanUsage } from "../core/plan";
 import { setClaudePlanUsage, storedClaudePlanUsage } from "../views/usage";
 import { refreshSchedule } from "../views/schedule";
-import type { ScheduleFired } from "../core/bridge";
+import type { PhoneEvent, ScheduleFired } from "../core/bridge";
 import { N_, t } from "../i18n/i18n";
 
 const CLAUDE_ID = "integration_claude";
@@ -248,6 +248,15 @@ export function registerHookHandlers(island: Island) {
     State.view = "command";
     island.alert("command");
     refreshSchedule();
+  });
+  // The phone (KDE Connect): a message or an incoming call peeks the island.
+  void onEvent<PhoneEvent>("phone-event", (e) => {
+    // A card waiting for an answer is never covered by another alert.
+    if (State.pendingApproval) return;
+    Sound.play(e.kind === "call" ? "reminder" : "message");
+    State.assist = { kind: "note", text: e.kind === "call" ? `📞 ${e.title}: ${e.text}` : `📱 ${e.title}${e.text ? `\n${e.text}` : ""}` };
+    State.view = "command";
+    island.alert("command");
   });
   void onEvent<unknown>("plan-usage", (limits) => {
     const usage = parseClaudePlan(limits);

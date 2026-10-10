@@ -46,6 +46,10 @@ limitations recorded as each phase lands.
   event-driven), `calendar.rs` (+ `helpers/fedo-calendar.py`, Evolution Data
   Server) and `timeplan.rs` (time phrases, reminder plans). Writing to the
   calendar always goes through the confirm card.
+- `app/src-tauri/src/contacts.rs`, `phone.rs` (KDE Connect D-Bus + CLI),
+  `phoneplan.rs` (sentences) and `actions.rs` (call / SMS / WhatsApp / Gmail /
+  send-to-phone cards and their executors). Nothing reaches a person or the
+  phone without the card's Enter; `do_action` re-validates every parameter.
 - `app/src-tauri/src/chat.rs` — the chat: one `claude -p` run per turn
   (stream-json, `--resume` for follow-ups, read-only tools). `notify.rs` is
   the desktop notification; `unlock.rs` the Monday-unlock recap trigger.

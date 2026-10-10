@@ -10,7 +10,7 @@
 // Plain English, deliberately outside the i18n tables like the debug menu.
 
 import { h, clear } from "./dom";
-import { Bridge, type AssistCard, type AssistEvent, type AssistReply } from "../core/bridge";
+import { Bridge, type AssistAction, type AssistCard, type AssistEvent, type AssistReply } from "../core/bridge";
 import { State } from "../core/state";
 import type { ViewActions, ViewHost } from "./views";
 
@@ -40,6 +40,8 @@ export function buildCommand(actions: ViewActions): ViewHost {
   let phase: Phase = { kind: "ask" };
   /** The card chosen from a `choices` reply, if any. */
   let chosen: AssistCard | null = null;
+  /** The action chosen from an `actionChoices` reply (or the lone `action`). */
+  let chosenAction: AssistAction | null = null;
   let shown: AssistReply | null = null;
   let pinned = false;
   let busy = false;
@@ -53,6 +55,7 @@ export function buildCommand(actions: ViewActions): ViewHost {
   const finish = (back: "prompt" | "overview" = "overview") => {
     State.assist = null;
     chosen = null;
+    chosenAction = null;
     phase = { kind: "ask" };
     pin(false);
     actions.setView(back);
@@ -210,6 +213,48 @@ export function buildCommand(actions: ViewActions): ViewHost {
     );
   }
 
+  async function doAction(a: AssistAction) {
+    if (busy) return;
+    busy = true;
+    try {
+      const text = await Bridge.assistDo(a);
+      phase = { kind: "ran", text: text ?? "Needs the Fedo app." };
+    } catch (err) {
+      phase = { kind: "ran", text: String(err).replace(/^Error:\s*/, "") };
+    } finally {
+      busy = false;
+    }
+    State.notify();
+  }
+
+  function renderAction(a: AssistAction) {
+    cardEl.style.setProperty("--wash", a.warning ? "rgba(245,158,11,0.5)" : "rgba(99,102,241,0.5)");
+    who.replaceChildren(h("span", { class: "risk-chip safe", text: a.kind.replace("-", " ") }), h("span", { text: "confirm first" }));
+    body.append(h("div", { class: "cmd-code", text: a.title }));
+    if (a.lines.length) body.append(h("pre", { class: "cmd-details", text: a.lines.join("\n") }));
+    if (a.warning) body.append(h("div", { class: "cmd-warn careful", text: a.warning }));
+    if (a.note) body.append(h("div", { class: "cmd-why", text: a.note }));
+    row.append(button("Cancel", "secondary", () => finish(), "Esc"));
+    // A card that cannot work (no country code) has nothing to confirm.
+    if (!(a.warning && a.params["digits"] === "")) row.append(button("Do it", "primary", () => void doAction(a), "⏎"));
+  }
+
+  function renderActionChoices(title: string, options: { label: string; detail: string; action: AssistAction }[]) {
+    cardEl.style.setProperty("--wash", "rgba(99,102,241,0.5)");
+    who.replaceChildren(h("span", { text: title }));
+    for (const [i, o] of options.entries()) {
+      body.append(
+        h(
+          "button",
+          { class: "cmd-choice", onclick: () => { chosenAction = o.action; State.notify(); } },
+          h("b", { text: `${i + 1}  ${o.label}` }),
+          h("span", { text: o.detail }),
+        ),
+      );
+    }
+    row.append(button("Cancel", "secondary", () => finish(), "Esc"));
+  }
+
   function renderChoices(title: string, options: AssistReply & { kind: "choices" }) {
     cardEl.style.setProperty("--wash", "rgba(99,102,241,0.5)");
     who.replaceChildren(h("span", { text: title }));
@@ -270,6 +315,19 @@ export function buildCommand(actions: ViewActions): ViewHost {
         if (n >= 1 && n <= a.options.length) { swallow(); chosen = a.options[n - 1].card; State.notify(); }
         return;
       }
+      if (a.kind === "action" || (a.kind === "actionChoices" && chosenAction)) {
+        const act = a.kind === "action" ? a.action : chosenAction!;
+        if (e.key === "Enter" && phase.kind === "ask" && !(act.warning && act.params["digits"] === "")) {
+          swallow();
+          void doAction(act);
+        }
+        return;
+      }
+      if (a.kind === "actionChoices") {
+        const n = Number(e.key);
+        if (n >= 1 && n <= a.options.length) { swallow(); chosenAction = a.options[n - 1].action; State.notify(); }
+        return;
+      }
       if (a.kind === "event" && phase.kind === "ask") {
         if (e.key === "Enter") { swallow(); void createEvent(a.event, a.event.title, ""); }
         else if (e.key.toLowerCase() === "e") {
@@ -296,6 +354,7 @@ export function buildCommand(actions: ViewActions): ViewHost {
       if (a !== shown) {
         shown = a;
         chosen = null;
+        chosenAction = null;
         phase = { kind: "ask" };
       }
       clear(body);
@@ -325,6 +384,13 @@ export function buildCommand(actions: ViewActions): ViewHost {
           break;
         case "event":
           renderEvent(a.event);
+          break;
+        case "action":
+          renderAction(a.action);
+          break;
+        case "actionChoices":
+          if (chosenAction) renderAction(chosenAction);
+          else renderActionChoices(a.title, a.options);
           break;
         case "open":
           break;

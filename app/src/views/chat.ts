@@ -113,7 +113,12 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     // actions become a card, everything else falls through to the chat.
     const promptMode = State.promptMode;
     try {
-      const routed = await Bridge.assistRoute(query, promptMode, State.chatHistory.length > 1);
+      const routed = await Bridge.assistRoute(
+        query,
+        promptMode,
+        State.chatHistory.length > 1,
+        State.droppedFile ? { name: State.droppedFile.name, path: State.droppedFile.path } : null,
+      );
       if (routed && routed.kind !== "chat") {
         State.chatHistory.pop();
         State.stateOverride = null;
@@ -128,7 +133,7 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
         }
         State.assist = routed;
         State.view = "command";
-        Sound.play(routed.kind === "card" || routed.kind === "choices" || routed.kind === "event" ? "question" : "approve");
+        Sound.play(["card", "choices", "event", "action", "actionChoices"].includes(routed.kind) ? "question" : "approve");
         sending = false;
         State.notify();
         onHeightChange();
@@ -194,6 +199,15 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
         log.scrollTop = log.scrollHeight;
       }
 
+      // A card asked "to whom?": the input starts with what it knows.
+      if (State.chatPrefill != null) {
+        input.value = State.chatPrefill;
+        State.chatPrefill = null;
+        queueMicrotask(() => {
+          input.focus();
+          input.setSelectionRange?.(input.value.length, input.value.length);
+        });
+      }
       input.placeholder = t(State.chatHistory.length === 0 ? STRINGS.placeholderFirst : STRINGS.placeholderNext);
       input.disabled = sending;
     },

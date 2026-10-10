@@ -525,6 +525,22 @@ function generalSection(): HTMLElement {
     void save();
   });
 
+  const phoneApps = h("input", {
+    type: "text", value: settings.phoneNotifyApps.join(", "), style: "width:200px",
+  }) as HTMLInputElement;
+  phoneApps.addEventListener("change", () => {
+    settings.phoneNotifyApps = phoneApps.value.split(",").map((s) => s.trim()).filter(Boolean);
+    void save();
+  });
+  const countryCode = h("input", {
+    type: "text", value: settings.phoneCountryCode, placeholder: "91", style: "width:56px",
+  }) as HTMLInputElement;
+  countryCode.addEventListener("change", () => {
+    settings.phoneCountryCode = countryCode.value.replace(/\D/g, "").slice(0, 4);
+    countryCode.value = settings.phoneCountryCode;
+    void save();
+  });
+
   const screen = h("select", {}) as HTMLSelectElement;
   screen.append(
     h("option", { value: "primary", text: t("Main display") }),
@@ -572,6 +588,17 @@ function generalSection(): HTMLElement {
       toggle(settings.notifyOnDone, (v) => { settings.notifyOnDone = v; void save(); }),
       notifyAfter,
       h("span", { class: "hint", text: t("seconds or more, if the island isn't showing it") }),
+    ),
+    h("div", { class: "row" },
+      h("label", { text: "Phone alerts" }),
+      toggle(settings.phoneNotify, (v) => { settings.phoneNotify = v; void save(); }),
+      h("span", { class: "hint", text: "peek the island for notifications from:" }),
+      phoneApps,
+    ),
+    h("div", { class: "row" },
+      h("label", { text: "Country code" }),
+      countryCode,
+      h("span", { class: "hint", text: "for local numbers in WhatsApp (blank = from your time zone)" }),
     ),
     h("div", { class: "row" },
       h("label", { text: "Event reminder" }),

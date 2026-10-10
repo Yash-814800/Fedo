@@ -2,8 +2,10 @@
 
 mod agent_hooks;
 mod agents;
+mod actions;
 mod assist;
 mod calendar;
+mod contacts;
 mod chat;
 mod config_file;
 mod dbus_service;
@@ -25,6 +27,8 @@ mod settings;
 mod shortcuts;
 mod sounds;
 mod notify;
+mod phone;
+mod phoneplan;
 mod scheduler;
 mod spotify;
 mod timeplan;
@@ -682,6 +686,7 @@ pub fn run() {
             assist::assist_route,
             assist::assist_run,
             assist::assist_copy,
+            assist::assist_do,
             assist::assist_create_event,
             notify::notify_done,
             scheduler::schedule_list,
@@ -735,6 +740,7 @@ pub fn run() {
             dbus_service::start(&handle);
             unlock::start(handle.clone());
             scheduler::start(handle.clone());
+            phone::start_listener(handle.clone());
             spotify::sync(&handle, &loaded.active_integrations);
             shortcuts::apply(&handle, &loaded.shortcuts);
             // Startup is a burst of one-off work (GTK, the tray, the portal);

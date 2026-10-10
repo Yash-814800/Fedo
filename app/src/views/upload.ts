@@ -2,7 +2,9 @@
 // ports of UploadView / UploadingView / ChooseView from IslandViewContent.swift.
 //
 // `choose` offers "Ask a question" (the file's path rides with the first chat
-// message, so Claude Code can read it); sending it on is Phase 6.
+// message, so Claude Code can read it) and sending it on: Gmail, ZapZap, the
+// phone. Those fill the chat input; the assistant turns the sentence into a
+// confirm card (actions.rs).
 
 import { h, clear } from "./dom";
 import { State } from "../core/state";
@@ -95,10 +97,20 @@ export function buildChoose(actions: ViewActions): ViewHost {
       text: tl("Ask a question"),
       onclick: () => actions.setView("prompt"),
     }),
-    // The three below come alive with Phase 6 (Gmail, ZapZap, KDE Connect).
-    ...[N_("Gmail"), N_("ZapZap"), N_("Phone")].map((label) =>
-      h("button", { class: "btn secondary", text: tl(label), disabled: true, title: tl("Coming soon") }),
-    ),
+    // Where to send it: the chat input starts with what the card knows, and
+    // the user finishes "to whom?". The phone needs nobody.
+    h("button", {
+      class: "btn secondary", text: tl("Gmail"),
+      onclick: () => { State.chatPrefill = "Send it via Gmail to "; actions.setView("prompt"); },
+    }),
+    h("button", {
+      class: "btn secondary", text: tl("ZapZap"),
+      onclick: () => { State.chatPrefill = "Send it via ZapZap to "; actions.setView("prompt"); },
+    }),
+    h("button", {
+      class: "btn secondary", text: tl("Phone"),
+      onclick: () => { State.chatPrefill = "Send this to my phone"; actions.setView("prompt"); },
+    }),
     h("button", {
       class: "btn secondary",
       text: tl("Cancel"),

@@ -157,8 +157,10 @@ export const Bridge = {
     callOrThrow<{ text: string }>("chat_send", { query, context }),
   chatReset: () => call<void>("chat_reset"),
   /** The command assistant's router (Rust assist.rs). `promptMode` rewrites the text as a prompt. */
-  assistRoute: (query: string, promptMode: boolean, fastOnly: boolean) =>
-    call<AssistReply>("assist_route", { query, promptMode, fastOnly }),
+  assistRoute: (query: string, promptMode: boolean, fastOnly: boolean, file: { name: string; path: string } | null = null) =>
+    call<AssistReply>("assist_route", { query, promptMode, fastOnly, file }),
+  /** Runs a confirmed call / SMS / WhatsApp / Gmail / send-to-phone card; resolves to what to tell the user. */
+  assistDo: (action: AssistAction) => call<string>("assist_do", { action }),
   /** Runs a confirmed command: a new terminal window, or hidden when `inline` and Fedo calls it safe. */
   assistRun: (command: string, inline: boolean) => call<AssistRun>("assist_run", { command, inline }),
   assistCopy: (text: string) => call<boolean>("assist_copy", { text }),
@@ -476,7 +478,25 @@ export type AssistReply =
   | { kind: "prompt"; text: string }
   | { kind: "event"; event: AssistEvent }
   | { kind: "open"; view: string }
+  | { kind: "action"; action: AssistAction }
+  | { kind: "actionChoices"; title: string; options: { label: string; detail: string; action: AssistAction }[] }
   | { kind: "note"; text: string };
+
+/** A confirmable action that reaches a person or the phone (Rust actions.rs). */
+export interface AssistAction {
+  kind: string;
+  title: string;
+  lines: string[];
+  note: string | null;
+  warning: string | null;
+  params: Record<string, unknown>;
+}
+
+export interface PhoneEvent {
+  kind: "notification" | "call";
+  title: string;
+  text: string;
+}
 
 export interface AssistEvent {
   kind: "event" | "deadline";

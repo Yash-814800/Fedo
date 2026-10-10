@@ -26,6 +26,13 @@ pub struct Settings {
     /// Hovering the island opens it all the way, and it folds again shortly
     /// after the pointer leaves (the Mac's "Open on hover"). Off by default.
     pub open_on_hover: bool,
+    /// Phone notifications and incoming calls may peek the island.
+    pub phone_notify: bool,
+    /// Only apps whose name contains one of these (case-insensitive) peek it.
+    pub phone_notify_apps: Vec<String>,
+    /// The country code (digits) for local numbers when opening WhatsApp;
+    /// empty = work it out from the time zone.
+    pub phone_country_code: String,
     /// Minutes before an event that Fedo (and its VALARM) reminds you.
     pub event_reminder_minutes: u32,
     /// Days before a deadline to remind you; 0 is the morning of.
@@ -93,6 +100,9 @@ impl Default for Settings {
             notify_on_done: true,
             notify_after_seconds: 20.0,
             open_on_hover: false,
+            phone_notify: true,
+            phone_notify_apps: vec!["Phone".into(), "Dialer".into(), "Messages".into(), "WhatsApp".into()],
+            phone_country_code: String::new(),
             event_reminder_minutes: 15,
             deadline_reminder_days: vec![3, 1, 0],
             deadline_morning_hour: 9,
@@ -370,6 +380,9 @@ mod tests {
   "notifyOnDone": false,
   "notifyAfterSeconds": 5.0,
   "openOnHover": true,
+  "phoneNotify": false,
+  "phoneNotifyApps": ["Signal"],
+  "phoneCountryCode": "44",
   "eventReminderMinutes": 30,
   "deadlineReminderDays": [7, 2],
   "deadlineMorningHour": 8,
@@ -751,6 +764,9 @@ mod tests {
                 "notifyOnDone",
                 "notifyAfterSeconds",
                 "openOnHover",
+                "phoneNotify",
+                "phoneNotifyApps",
+                "phoneCountryCode",
                 "eventReminderMinutes",
                 "deadlineReminderDays",
                 "deadlineMorningHour",
