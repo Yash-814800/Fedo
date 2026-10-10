@@ -30,10 +30,15 @@ limitations recorded as each phase lands.
   color, category and connection method lives here; IDs are stable
   contract values and are never renamed, even for a pill this build
   doesn't offer (marked `support: "no"` instead of deleted).
-- `app/src/ghost/engine.ts` — the ghost's animation engine: state
-  machine, tweens, particles. Its body is a plain circle for now
-  (Phase 0 placeholder) — Phase 2 redraws it, in code, without touching
-  the state machine underneath.
+- `app/src/ghost/engine.ts` — the ghost: state machine, tweens, particles
+  and its Canvas 2D body (wavy hem, translucent edges, float, fade in / idle
+  fade / wisp away, loop-de-loop, listening aura, working wisp).
+  `app/src/ghost/debug-menu.ts` is the hidden debug menu (Shift+click the
+  ghost in the open island, or Ctrl+Alt+Shift+D): every state, emote, move
+  and sound.
+- `app/scripts/make-sounds.mjs` — renders `app/sounds/*.wav` (Fedo's own,
+  synthesised; rerun it after editing a sound). Users override any of them
+  with `~/.config/fedo/sounds/<name>.wav`.
 - `docs/AGENTS.md` — the hook relay's third-party agent protocol (still
   accurate and live, even though only Claude Code and Antigravity get a
   one-click installer in this build).

@@ -1,9 +1,9 @@
-// Fedo's ghost — temporary placeholder (FEDO.md Phase 0): a plain circle with
-// two eyes, animated by the same state machine, tweens and particles as the
-// upstream character engine this was forked from. The body is a circle
-// instead of upstream's branded superellipse "blob", and there is no outfit
-// rendering (wardrobe/outfits.ts are gone, Phase 0 §1). Phase 2 replaces this
-// with the real ghost design.
+// Fedo's ghost (FEDO.md Phase 2): a soft rounded ghost with a wavy hem,
+// translucent edges and big eyes that follow the cursor, drawn entirely in
+// Canvas 2D. The state machine, tweens and particles underneath are the ones
+// the placeholder circle already used; this file changes what they draw and
+// adds the ghost-native behaviour (fade in, fade to near-transparent when idle,
+// wisp away, float, loop-de-loop, listening aura, working wisp).
 
 import { Ease, lerp, type EaseFn } from "../core/anim";
 import { Sound } from "../core/sound";
@@ -41,7 +41,7 @@ interface Tween {
 type PropKey =
   | "yaw" | "pitch" | "roll" | "tilt" | "open" | "sx" | "sy"
   | "oy" | "ox" | "tint" | "morph" | "hands" | "blush" | "es" | "badgeS"
-  | "outfitPresence";
+  | "outfitPresence" | "presence" | "loop";
 
 interface BotStateCfg {
   color: RGB;
@@ -55,22 +55,30 @@ interface BotStateCfg {
   sweat: boolean;
   look: readonly [number, number] | null;
   tilt: number;
+  /** A small orb circling the ghost (working, searching). */
+  wisp: boolean;
+  /** Pulsing rings round the ghost while the mic is open. */
+  aura: boolean;
 }
 
 interface Particle {
-  type: "heart" | "star" | "spark" | "sweat" | "z";
+  type: "heart" | "star" | "spark" | "sweat" | "z" | "wisp";
   x: number; y: number; vx: number; vy: number;
   age: number; life: number; rot: number; size: number;
 }
 
 // ── Constants ─────────────────────────────────────
 
-const EYE_W = 0.25;
-const EYE_H = 0.27;
+const EYE_W = 0.29;
+const EYE_H = 0.32;
 const EYE_SP = 0.37;
 const EYE_P = -0.12;
-const BASE_TOP: RGB = [0.929, 0.929, 0.937]; // #EDEDEF
-const BASE_BOTTOM: RGB = [0.769, 0.773, 0.792]; // #C4C5CA
+const BASE_TOP: RGB = [0.973, 0.98, 1]; // #F8FAFF
+const BASE_BOTTOM: RGB = [0.78, 0.82, 0.945]; // #C7D1F1
+/** How visible an idle ghost is: near-transparent, but still findable. */
+const IDLE_PRESENCE = 0.34;
+/** Idle seconds before the ghost fades back. */
+const IDLE_FADE_AFTER = 6;
 const INK = "rgb(26,20,18)"; // #1A1412
 const MINI_INK = "rgb(16,19,26)"; // #10131A
 
@@ -86,18 +94,19 @@ const C = {
   ratelimit: [0.984, 0.573, 0.235] as RGB,
   sleeping: [0.58, 0.635, 0.722] as RGB,
   dizzy: [0.957, 0.447, 0.714] as RGB,
+  listening: [0.3, 0.88, 0.8] as RGB,
 };
 
 const base = {
   bounces: false, scans: false, breathes: false, zz: false, sweat: false,
-  look: null, tilt: 0,
+  look: null, tilt: 0, wisp: false, aura: false,
 };
 
 export const BOT_STATES: Record<BotStateName, BotStateCfg> = {
   idle: { ...base, color: C.idle, tint: 0, eye: "pill", badge: null },
-  working: { ...base, color: C.working, tint: 0.72, eye: "pill", badge: { kind: "dots", color: C.working } },
+  working: { ...base, color: C.working, tint: 0.72, eye: "pill", badge: { kind: "dots", color: C.working }, wisp: true },
   thinking: { ...base, color: C.thinking, tint: 0.72, eye: "pill", badge: { kind: "dots", color: C.thinking }, look: [0.55, 0.55] },
-  searching: { ...base, color: C.searching, tint: 0.72, eye: "pill", badge: { kind: "dots", color: C.searching }, scans: true },
+  searching: { ...base, color: C.searching, tint: 0.72, eye: "pill", badge: { kind: "dots", color: C.searching }, scans: true, wisp: true },
   approval: { ...base, color: C.approval, tint: 0.78, eye: "wide", badge: { kind: "bang", color: C.approval }, bounces: true },
   question: { ...base, color: C.question, tint: 0.75, eye: "pill", badge: { kind: "question", color: C.question }, tilt: 0.17 },
   error: { ...base, color: C.error, tint: 0.78, eye: "flat", badge: { kind: "dot", color: C.error } },
@@ -105,13 +114,14 @@ export const BOT_STATES: Record<BotStateName, BotStateCfg> = {
   ratelimit: { ...base, color: C.ratelimit, tint: 0.72, eye: "tired", badge: { kind: "dot", color: C.ratelimit }, sweat: true },
   sleeping: { ...base, color: C.sleeping, tint: 0.32, eye: "closed", badge: null, breathes: true, zz: true },
   dizzy: { ...base, color: C.dizzy, tint: 0.7, eye: "spiral", badge: null },
+  listening: { ...base, color: C.listening, tint: 0.5, eye: "wide", badge: null, aura: true, tilt: -0.06 },
 };
 
 /** State → sound, as in BotStateCfg.sound. */
 export const STATE_SOUND: Partial<Record<BotStateName, string>> = {
   working: "work", thinking: "think", searching: "search", approval: "approval",
   question: "question", error: "error", finished: "finish", ratelimit: "rate",
-  sleeping: "sleep", dizzy: "dizzy",
+  sleeping: "sleep", dizzy: "dizzy", listening: "listenstart",
 };
 
 const EMOTE_EYE: Record<BotEmoteName, EyeShape> = {
@@ -205,6 +215,20 @@ export class BotEngine {
   yaw = 0; pitch = 0; roll = 0; tilt = 0; open = 1;
   sx = 1; sy = 1; oy = 0; ox = 0;
   tint = 0; morph = 0; hands = 0; blush = 0; es = 1; badgeS = 0;
+  /** Overall visibility, 0…1: fades in on appear, down to near-transparent when idle. */
+  presence = 1;
+  /** 0…1 progress of the loop-de-loop. */
+  loop = 0;
+  /** Hem wave phase, radians. */
+  private hemPhase = 0;
+  /** The ghost has wisped away: stays gone until appear(). */
+  private vanished = false;
+  /** Last time anything happened to the ghost (idle fade). */
+  private lastTouch = now();
+  /** Idle fade can be switched off (the recap's still, mini bots). */
+  idleFade = true;
+  private lateNight = false;
+  private lateNightCheck = 0;
 
   // No outfit in this build (the field below is inert). `outfit` is what is
   // drawn; it changes only once the previous one has left.
@@ -277,6 +301,7 @@ export class BotEngine {
   setState(next: BotStateName, force = false) {
     if (this.state === next && !force) return;
     const prev = this.state;
+    this.touch();
     this.state = next;
     this.cfg = BOT_STATES[next];
     this.colT = this.cfg.color;
@@ -286,7 +311,7 @@ export class BotEngine {
 
     switch (next) {
       case "finished":
-        this.doRoll(950, 1);
+        this.loopDeLoop();
         setTimeout(() => this.emit("spark", 5), 500);
         break;
       case "error":
@@ -330,6 +355,47 @@ export class BotEngine {
     this.anim("open", [[0.06, 70, Ease.inOut], [1, 130, Ease.out]]);
   }
 
+  /** Skip the wait: the idle fade starts now (debug menu). */
+  restIdle() {
+    this.lastTouch = now() - IDLE_FADE_AFTER - 1;
+  }
+
+  /** Something happened: the idle fade starts over. */
+  touch() {
+    this.lastTouch = now();
+  }
+
+  /** Fades in from nothing with a small rise and a settle. */
+  appear() {
+    this.vanished = false;
+    this.touch();
+    this.presence = 0;
+    this.tweens.delete("oy");
+    this.locks.delete("oy");
+    this.oy = 0.28;
+    this.anim("presence", [[1, 520, Ease.out]]);
+    this.anim("oy", [[0, 560, Ease.out]]);
+    this.anim("sy", [[0.82, 1, Ease.lin], [1, 420, Ease.back]]);
+    this.anim("sx", [[1.1, 1, Ease.lin], [1, 420, Ease.back]]);
+  }
+
+  /** Wisps away: stretches up, thins out and leaves a few puffs behind. */
+  vanish() {
+    if (this.vanished) return;
+    this.vanished = true;
+    this.emit("wisp", 6);
+    this.anim("presence", [[0, 460, Ease.easeIn]]);
+    this.anim("oy", [[-0.3, 460, Ease.easeIn]]);
+    this.anim("sy", [[1.18, 460, Ease.inOut]]);
+    this.anim("sx", [[0.78, 460, Ease.inOut]]);
+  }
+
+  /** A little loop-de-loop in the air (task done). */
+  loopDeLoop() {
+    this.loop = 0;
+    this.anim("loop", [[1, 900, Ease.inOut]], () => { this.loop = 0; });
+  }
+
   squash() {
     this.physVy += 0.6;
     this.anim("sy", [[0.78, 70, Ease.out], [1.1, 130, Ease.out], [1, 170, Ease.inOut]]);
@@ -351,6 +417,7 @@ export class BotEngine {
 
   slap() {
     this.interruptGreet();
+    this.touch();
     if (this.state === "dizzy") return;
     const t = now();
     this.slapTimes = this.slapTimes.filter((s) => t - s < 1.7);
@@ -435,6 +502,7 @@ export class BotEngine {
 
   triggerEmote(emote: BotEmoteName, duration = 1.8) {
     const t = now();
+    this.touch();
     this.eyeOverride = EMOTE_EYE[emote];
     this.eyeOverrideUntil = t + duration;
 
@@ -547,6 +615,9 @@ export class BotEngine {
       this.cfg.bounces || this.cfg.scans || this.cfg.breathes || this.cfg.zz || this.cfg.sweat ||
       this.isMini ||
       this.isDancing || this.dancingLevel > 0.001 ||
+      // The float and the hem never stop on their own: a visible ghost is always moving.
+      !this.vanished || this.presence > 0.002 ||
+      this.cfg.wisp || this.cfg.aura ||
       Math.abs(this.tgYaw - this.yaw) > 0.002 ||
       Math.abs(this.tgPitch - this.pitch) > 0.002 ||
       Math.abs(this.tgTilt - this.tilt) > 0.002 ||
@@ -631,7 +702,11 @@ export class BotEngine {
 
     const bounce = this.cfg.bounces ? -Math.abs(Math.sin(t * 5.2)) * 0.07 : 0;
     const kGen = 1 - Math.pow(0.0008, dt);
-    if (!this.locks.has("oy")) this.oy += (bounce - this.oy) * kGen;
+    // A ghost floats: a slow bob, calmer when it sleeps, absent while dancing.
+    const float = this.isMini
+      ? 0
+      : Math.sin(t * 1.7) * (this.state === "sleeping" ? 0.02 : 0.035) * (1 - this.dancingLevel);
+    if (!this.locks.has("oy")) this.oy += (bounce + float - this.oy) * kGen;
 
     if (this.cfg.breathes) {
       const amp = this.isMini ? 0.07 : 0.035;
@@ -656,6 +731,26 @@ export class BotEngine {
     if (!this.locks.has("es")) this.es += (this.tgEs - this.es) * kGen;
 
     this.col = mix3(this.col, this.colT, 1 - Math.pow(0.002, dt));
+
+    // Visibility: a tween (appear / vanish) owns it; otherwise it eases to 1, or
+    // to near-transparent once the ghost has been idle for a while.
+    if (!this.locks.has("presence")) {
+      const resting =
+        this.idleFade && !this.isMini && this.state === "idle" && !this.isDancing &&
+        n - this.lastTouch > IDLE_FADE_AFTER;
+      const target = this.vanished ? 0 : resting ? IDLE_PRESENCE : 1;
+      this.presence += (target - this.presence) * (1 - Math.pow(resting || this.vanished ? 0.25 : 0.0005, dt));
+    }
+
+    // The hem ripples all the time, faster while the ghost moves.
+    const speed = 1.5 + Math.min(2.5, Math.abs(this.yaw - this.prevYaw) / Math.max(dt, 0.001) * 0.6);
+    this.hemPhase += dt * speed;
+
+    if (n > this.lateNightCheck) {
+      const hour = new Date().getHours();
+      this.lateNight = hour >= 0 && hour < 5;
+      this.lateNightCheck = n + 60;
+    }
 
     if (n > this.nextBlink) {
       if (this.state !== "sleeping" && this.state !== "dizzy") {
@@ -776,11 +871,19 @@ export class BotEngine {
     const R = W * 0.3;
     const rx = R * 1.14;
     const ry = R * 0.88;
-    const cx = W / 2 + this.ox * R;
-    const cy = H / 2 + this.particleOverhang / 2 + this.oy * R + R * 0.06;
+    // The loop-de-loop traces a circle that starts and ends at the resting spot.
+    const lp = this.loop * Math.PI * 2;
+    const cx = W / 2 + this.ox * R + (this.loop > 0 ? R * 0.6 * Math.sin(lp) : 0);
+    const cy = H / 2 + this.particleOverhang / 2 + this.oy * R + R * 0.06 +
+      (this.loop > 0 ? -R * 0.6 * (1 - Math.cos(lp)) : 0);
 
-    // With an outfit on, a roll turns the whole character — hat included — as
-    // one piece instead of rolling the eyes over the body (BotCanvasView, macOS).
+    x.save();
+    x.globalAlpha *= Math.max(0, Math.min(1, this.presence));
+    if (this.presence <= 0.003) { x.restore(); return; }
+
+    if (this.cfg.aura && !this.isMini) this.drawAura(x, R, cx, cy);
+    if (this.cfg.wisp && !this.isMini) this.drawWisp(x, R, cx, cy, false);
+
     x.save();
     if (this.rigidRoll && Math.abs(this.roll) > 0.001) {
       x.translate(cx, cy);
@@ -792,7 +895,7 @@ export class BotEngine {
 
     x.save();
     x.translate(cx, cy);
-    if (this.tilt !== 0) x.rotate(this.tilt);
+    if (this.tilt !== 0 || this.loop > 0) x.rotate(this.tilt + lp);
     x.scale(this.sx, this.sy);
 
     const body = this.bodyPath(rx, ry, R);
@@ -818,19 +921,61 @@ export class BotEngine {
     x.restore();
     x.restore();
 
+    if (this.cfg.wisp && !this.isMini) this.drawWisp(x, R, cx, cy, true);
+
     if (this.badge && this.badgeS > 0.01 && this.morph < 0.25) {
       this.drawBadge(x, this.badge, R, cx, cy);
     }
     this.drawParticles(x, R, cx, cy);
+    x.restore();
   }
 
-  /** A plain circle, interpolated into a rounded square while `morph` (the
-   * file-drop "box" effect) is active — the Phase 0 placeholder body. */
+  /** Two rings that swell outwards and fade — the mic is open. */
+  private drawAura(x: CanvasRenderingContext2D, R: number, cx: number, cy: number) {
+    const t = now();
+    for (let i = 0; i < 2; i++) {
+      const k = (((t * 0.9 + i * 0.5) % 1) + 1) % 1;
+      x.beginPath();
+      x.ellipse(cx, cy, R * (1.1 + k * 0.55), R * (0.95 + k * 0.5), 0, 0, Math.PI * 2);
+      x.lineWidth = Math.max(1, R * 0.07 * (1 - k));
+      x.strokeStyle = rgba(this.col, 0.55 * (1 - k));
+      x.stroke();
+    }
+  }
+
+  /** A small orb circling the ghost, with a short fading trail. The half behind
+   * the body is drawn before it, the half in front after it. */
+  private drawWisp(x: CanvasRenderingContext2D, R: number, cx: number, cy: number, front: boolean) {
+    const speed = this.state === "searching" ? 3.4 : 2.6;
+    const t = now() * speed;
+    for (let i = 0; i < 6; i++) {
+      const a = t - i * 0.2;
+      const isFront = Math.cos(a) > 0;
+      if (isFront !== front) continue;
+      const px = cx + Math.sin(a) * R * 1.32;
+      const py = cy - R * 0.18 + Math.sin(a * 2) * R * 0.08;
+      const r = R * (0.12 - i * 0.012);
+      const g = x.createRadialGradient(px, py, 0, px, py, r * 2.2);
+      g.addColorStop(0, rgba(this.col, 0.9 - i * 0.13));
+      g.addColorStop(1, rgba(this.col, 0));
+      x.fillStyle = g;
+      x.beginPath();
+      x.arc(px, py, r * 2.2, 0, Math.PI * 2);
+      x.fill();
+    }
+  }
+
+  /**
+   * The ghost: a round dome, nearly straight sides and a wavy hem. Sampled by
+   * angle so that `morph` (the file-drop "box") can still blend it into a
+   * rounded square point by point.
+   */
   private bodyPath(rx: number, ry: number, R: number): Path2D {
-    const n = 72;
+    const n = 120;
     const tw = R * 1.0;
     const th = R * 0.94;
     const tr = R * 0.42;
+    const amp = R * 0.085 * (1 + Math.min(0.6, Math.abs(this.physDx) * 0.6));
     const p = new Path2D();
     const m = this.morph;
     for (let i = 0; i <= n; i++) {
@@ -838,7 +983,15 @@ export class BotEngine {
       const ca = Math.cos(a);
       const sa = Math.sin(a);
       const px0 = rx * ca;
-      const py0 = ry * sa;
+      let py0: number;
+      if (sa <= 0) {
+        py0 = ry * sa;
+      } else {
+        // Straight-ish sides, flat-ish underside, then the hem ripples across it.
+        const s = Math.min(1, Math.pow(sa, 0.38) * 1.12);
+        const w = Math.min(1, Math.max(0, (sa - 0.08) / 0.5));
+        py0 = ry * s + amp * w * Math.sin(ca * Math.PI * 3 + this.hemPhase) - amp * w * 0.4;
+      }
       let px = px0;
       let py = py0;
       if (m >= 0.005) {
@@ -860,39 +1013,55 @@ export class BotEngine {
       x.fill(body);
       return;
     }
-    const g = x.createLinearGradient(rx * 0.7, -ry * 0.85, -rx * 0.8, ry * 0.9);
-    g.addColorStop(0, rgba(BASE_TOP));
-    g.addColorStop(1, rgba(BASE_BOTTOM));
+    // Translucent edges: solid in the middle, thinning towards the rim, with a
+    // soft halo behind so the ghost reads on any background.
+    x.save();
+    x.shadowColor = rgba(mix3(BASE_TOP, this.col, this.tint * 0.6), 0.45);
+    x.shadowBlur = R * 0.35;
+    const g = x.createLinearGradient(rx * 0.5, -ry, -rx * 0.5, ry);
+    g.addColorStop(0, rgba(BASE_TOP, 0.97));
+    g.addColorStop(1, rgba(BASE_BOTTOM, 0.9));
     x.fillStyle = g;
     x.fill(body);
+    x.restore();
     x.save();
+    x.clip(body);
 
     const effectiveTint = this.tint * (1 - this.morph);
     if (effectiveTint > 0.01) {
-      const tg = x.createLinearGradient(0, ry, 0, -ry);
-      tg.addColorStop(0, rgba(this.col, 0.72 * effectiveTint));
+      const tg = x.createLinearGradient(0, ry * 1.1, 0, -ry * 0.6);
+      tg.addColorStop(0, rgba(this.col, 0.78 * effectiveTint));
       tg.addColorStop(1, rgba(this.col, 0));
       x.fillStyle = tg;
       x.fill(body);
     }
 
-    const sh = x.createRadialGradient(0, 0, R * 0.15, 0, 0, R * 1.25);
-    sh.addColorStop(0, "rgba(0,0,0,0)");
-    sh.addColorStop(0.6, "rgba(0,0,0,0)");
-    sh.addColorStop(1, "rgba(0,0,0,0.2)");
-    x.fillStyle = sh;
+    // Edges go see-through: erase a soft ring at the rim.
+    x.globalCompositeOperation = "destination-out";
+    const edge = x.createRadialGradient(0, 0, R * 0.55, 0, 0, R * 1.35);
+    edge.addColorStop(0, "rgba(0,0,0,0)");
+    edge.addColorStop(0.62, "rgba(0,0,0,0)");
+    edge.addColorStop(1, "rgba(0,0,0,0.5)");
+    x.fillStyle = edge;
     x.fill(body);
+    x.globalCompositeOperation = "source-over";
 
-    const hl = x.createRadialGradient(rx * 0.34, -ry * 0.46, 0, rx * 0.34, -ry * 0.46, R * 0.42);
-    hl.addColorStop(0, "rgba(255,255,255,0.55)");
+    const hl = x.createRadialGradient(rx * 0.34, -ry * 0.5, 0, rx * 0.34, -ry * 0.5, R * 0.42);
+    hl.addColorStop(0, "rgba(255,255,255,0.7)");
     hl.addColorStop(1, "rgba(255,255,255,0)");
     x.fillStyle = hl;
     x.fill(body);
     x.restore();
+
+    x.strokeStyle = "rgba(255,255,255,0.4)";
+    x.lineWidth = Math.max(1, R * 0.035);
+    x.stroke(body);
   }
 
   private drawEyes(x: CanvasRenderingContext2D, body: Path2D, R: number, rx: number, ry: number) {
     let shape: EyeShape = this.eyeOverride ?? this.cfg.eye;
+    // Late at night an idle ghost is sleepy.
+    if (this.lateNight && !this.eyeOverride && this.state === "idle" && !this.isMini) shape = "tired";
     // Dancing: happy eyes in the calm states.
     if (this.isDancing && this.dancingLevel > 0.15 && !this.isMini && (this.state === "idle" || this.state === "finished")) {
       shape = "happy";
@@ -946,6 +1115,14 @@ export class BotEngine {
         const hh = Math.max(h * this.open, w * 0.3);
         roundRectPath(x, -w / 2, -hh / 2, w, hh, Math.min(w / 2, hh / 2));
         x.fill();
+        // A catchlight keeps the eyes alive; closed lids hide it.
+        if (!this.isMini && this.open > 0.5) {
+          x.fillStyle = "rgba(255,255,255,0.9)";
+          x.beginPath();
+          x.arc(w * 0.12, -hh * 0.22, w * 0.15, 0, Math.PI * 2);
+          x.fill();
+          x.fillStyle = ink;
+        }
         break;
       }
       case "dot":
@@ -1243,6 +1420,16 @@ export class BotEngine {
           starPath(x, sz, sz * 0.45);
           x.fill();
           break;
+        case "wisp": {
+          const g = x.createRadialGradient(0, 0, 0, 0, 0, sz * 1.6);
+          g.addColorStop(0, "rgba(235,240,255,0.85)");
+          g.addColorStop(1, "rgba(235,240,255,0)");
+          x.fillStyle = g;
+          x.beginPath();
+          x.arc(0, 0, sz * 1.6, 0, Math.PI * 2);
+          x.fill();
+          break;
+        }
         case "spark":
           x.rotate(p.rot);
           x.fillStyle = "#fff";

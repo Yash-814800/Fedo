@@ -1,7 +1,7 @@
-// SoundEngine — port of SoundEngine.swift.
-// The 29 WAVs are the macOS app's own files (see SOUNDS_DIR in vite.config.ts);
-// they are served at /sounds/<name>.wav. Default volume 0.12, slider range 0–0.2,
-// exactly like the Mac player, and several sounds may overlap.
+// SoundEngine. The WAVs are Fedo's own, rendered by scripts/make-sounds.mjs into
+// app/sounds (see SOUNDS_DIR in vite.config.ts) and served at /sounds/<name>.wav.
+// Default volume 0.12, slider range 0–0.2, and several sounds may overlap. Every
+// buffer is decoded once at preload, so play() only starts a source node.
 // A file of the user's own in the sounds folder (src-tauri/src/sounds.rs)
 // replaces a sound; one that doesn't decode falls back to the built-in one.
 
@@ -12,6 +12,8 @@ export const SOUND_NAMES = [
   "work", "finish", "error", "approval", "question", "approve", "gulp", "tick",
   "send", "love", "pop", "proud", "wink", "yawn", "attach", "think", "search",
   "rate", "sleep", "greeting",
+  // Phase 2: timers, reminders, messages and the microphone.
+  "timer", "reminder", "message", "listenstart", "listenstop",
 ] as const;
 
 export type SoundName = (typeof SOUND_NAMES)[number];

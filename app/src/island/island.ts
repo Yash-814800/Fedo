@@ -14,6 +14,7 @@ import { Sound } from "../core/sound";
 import { State } from "../core/state";
 import { SPOTIFY_ID, islandDances } from "../core/spotify";
 import { BotEngine, hexToRGB } from "../ghost/engine";
+import { DebugMenu } from "../ghost/debug-menu";
 import { Greeting } from "../ghost/greeting";
 import { createMiniBot, pruneMiniBots, syncMiniBotStates, tickMiniBots } from "../ghost/minibots";
 import { UploadCanvas } from "../upload/canvas";
@@ -72,6 +73,10 @@ export class Island {
 
   private engine = new BotEngine();
   private greeting = new Greeting();
+  /** Hidden debug menu (ghost/debug-menu.ts); null until first needed. */
+  private debugMenu: DebugMenu | null = null;
+  /** Forced by the debug menu; null = follow the music. */
+  private debugDance: boolean | null = null;
   private greetingShown = false;
 
   private running = false;
@@ -349,6 +354,9 @@ export class Island {
     const prev = State.mode;
     if (mode === prev) return;
     State.mode = mode;
+    // The ghost fades in as the island comes out, and wisps away as it leaves.
+    if (prev === "hidden") this.engine.appear();
+    if (mode === "hidden") this.engine.vanish();
     if (mode === "expanded") Sound.play("open");
     if (prev === "expanded") {
       Sound.play("close");
@@ -357,6 +365,7 @@ export class Island {
       void Bridge.focusWindow(false);
     }
     if (mode !== "expanded") {
+      if (this.debugMenu?.isOpen) this.debugMenu.close();
       closePlanCard();
       this.engine.resetMorph();
       // Nothing can be seen of the sequence once the island is shut, and leaving
@@ -449,6 +458,33 @@ export class Island {
 
   emote(name: BotEmoteName) {
     this.engine.triggerEmote(name);
+    this.ensureRunning();
+  }
+
+  private toggleDebugMenu() {
+    if (State.mode !== "expanded") return;
+    this.debugMenu ??= new DebugMenu(
+      {
+        engine: this.engine,
+        forceState: (s) => {
+          State.stateOverride = s;
+          this.engine.setState(State.effectiveState, true);
+          State.notify();
+        },
+        forceDance: (on) => {
+          this.debugDance = on;
+          this.ensureRunning();
+        },
+        pin: (on) => {
+          State.debugOpen = on;
+          this.setPinned(on);
+        },
+        emote: (name) => this.emote(name),
+      },
+      this.islandEl,
+    );
+    this.debugMenu.toggle();
+    this.animateGeometry(!State.debugOpen);
     this.ensureRunning();
   }
 
@@ -615,6 +651,8 @@ export class Island {
     if (State.mode === "expanded" && State.view === "question" && State.pendingApproval?.questions) {
       h = QUESTION_PICKER_H;
     }
+    // The debug menu needs room for its buttons.
+    if (State.mode === "expanded" && State.debugOpen) h = Math.max(h, PANEL_H - 4);
     const r = State.mode === "expanded" ? EXPANDED_CORNER : ROUNDED_CORNER;
     return { w, h, r };
   }
@@ -709,6 +747,11 @@ export class Island {
         return;
       }
       if (this.isBotHit(e.clientX, e.clientY)) {
+        // Shift+click is the way into the hidden debug menu, not a poke.
+        if (e.shiftKey) {
+          this.toggleDebugMenu();
+          return;
+        }
         this.cancelBotHover();
         this.engine.slap();
       }
@@ -747,6 +790,15 @@ export class Island {
     // a terminal — so it may fold a waiting card away, as Escape in the notch
     // does on macOS.
     window.addEventListener("keydown", (e) => {
+      if (e.ctrlKey && e.altKey && e.shiftKey && e.key.toLowerCase() === "d") {
+        e.preventDefault();
+        this.toggleDebugMenu();
+        return;
+      }
+      if (e.key === "Escape" && State.debugOpen) {
+        this.toggleDebugMenu();
+        return;
+      }
       if (e.key === "Escape" && State.mode === "expanded") {
         if (State.pendingApproval) this.foldApproval();
         else if (!State.isPinned) this.collapse();
@@ -854,6 +906,7 @@ export class Island {
   private botHoverIn(x: number, y: number) {
     if (performance.now() / 1000 - this.lastLoveTime < 6) return;
     this.botHoverStart = { x, y };
+    this.engine.touch();
     this.engine.blink();
     this.engine.tgEs = 1.08;
     Sound.play("hover");
@@ -1041,7 +1094,7 @@ export class Island {
     }
     // Dances while music plays: always in the compact island, expanded only on
     // the music pill's card (BotCanvasView, macOS). Asked every frame.
-    this.engine.setDancing(islandDances({
+    this.engine.setDancing(this.debugDance ?? islandDances({
       music: State.spotifyPlaying,
       state: State.effectiveState,
       mode: State.mode,

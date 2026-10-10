@@ -3,6 +3,62 @@
 A running log of decisions, things verified on this machine, and known
 limitations, per `FEDO.md` rule 7. Newest phase first.
 
+## Phase 2 — the ghost and sounds
+
+### What was built
+
+- **Ghost body** (`app/src/ghost/engine.ts`), Canvas 2D only: dome top,
+  near-straight sides, a three-lobe wavy hem that ripples faster while the
+  ghost moves, translucent rim (soft `destination-out` ring + halo), a state
+  tint that climbs from the hem, bigger eyes with a catchlight. The file-drop
+  "box" morph still blends it into a rounded square point by point.
+- **Ghost-native behaviour**: float/bob; `appear()` (fade in with a small
+  rise, called when the island leaves `hidden`); idle fade to 34 % after 6 s
+  idle (any state change, emote, poke or hover resets it); `vanish()` (stretch
+  up, thin out, puffs; called when the island goes `hidden`).
+- **States / emotes**: idle, blink, cursor-following eyes (already there),
+  working (orbiting wisp, also used by searching), needs-you (`approval`
+  bounce + glow + `!`), happy = `finished` now does a real loop-de-loop,
+  sleepy = `sleeping` plus tired-eyed idle between 00:00 and 05:00,
+  poked = `slap()` squish, dizzy = three pokes inside 1.7 s, thinking, dancing
+  (existing Spotify rule), and the new **listening** state (pulsing aura
+  rings, wide eyes, `listenstart` sound). Nothing sets `listening` yet —
+  Phase 8 will.
+- **Sounds**: `app/scripts/make-sounds.mjs` synthesises 34 WAVs (mono, 16-bit,
+  32 kHz, 894 KiB total, deterministic) into `app/sounds/`. FEDO.md's names
+  map to the existing play names: done=`finish`, needs-approval=`approval`,
+  poke=`slap`; new are `timer`, `reminder`, `message`, `listenstart`,
+  `listenstop` (names are lowercase letters only because `sounds.rs` accepts
+  nothing else for `~/.config/fedo/sounds/<name>.wav` overrides, which
+  already worked). Buffers are decoded once at preload; mute and volume were
+  already in settings.
+- **Debug menu** (`ghost/debug-menu.ts`): Shift+click the ghost in the open
+  island, or Ctrl+Alt+Shift+D. Every state, emote, move (poke, loop, fade
+  in, wisp away, go idle-faint, dance) and all 34 sounds. Holds the island
+  open and grows it to full panel height while up; Esc or "close" ends it.
+
+### Verified
+
+- `npx tsc --noEmit` clean; `npm run build` ok (34 WAVs land in `dist/sounds`).
+- All 34 WAVs parsed: peaks 0.35–0.70, 0.02–1.4 s, no edge clicks.
+- Rendered every state plus idle-faint, love, vanishing and loop-de-loop to
+  a canvas in headless Chrome and looked at the result.
+
+### Not verified / known gaps
+
+- **Nobody has heard the sounds** — only checked numerically. Tune them by ear
+  in the debug menu; rerun the script after editing.
+- **Not run in the real Tauri/WebKitGTK island** on screen; the Shift+click
+  and key combo were not exercised there. The dock window may not receive
+  key events on GNOME (Phase 1 had the extension handle Esc for that reason),
+  so Shift+click is the dependable entry.
+- The float and hem never stop, so an open or compact island keeps its frame
+  loop (and audio context) awake until it hides; CPU with the island open was
+  **not** re-measured this phase.
+- The desktop ghost and recap use the same engine and inherit the new body,
+  but their callers don't trigger `appear`/`vanish`.
+- `npm test` is the same already-failing suite from Phase 0.
+
 ## Phase 1 — GNOME top-bar extension + island behavior
 
 ### What was built

@@ -11,3 +11,7 @@ that draws its own ghost character (there are no art files to license
 separately: the character is drawn in code, `Canvas` + `TimelineView`-style,
 per `CLAUDE.md`'s rules). Fedo's name, ghost design and sounds are this
 fork's own and carry no additional restriction beyond the MIT License.
+
+The sounds in `app/sounds/` are rendered by `app/scripts/make-sounds.mjs`
+from sine/triangle oscillators and filtered noise — no samples — and are
+covered by the same terms as the code.

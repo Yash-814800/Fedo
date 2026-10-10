@@ -2628,3 +2628,31 @@ html[data-dir="rtl"] #views :is(.bubble, .reply .md-p, .reply .md-h, .reply .md-
   unicode-bidi: plaintext;
   text-align: start;
 }
+
+/* Hidden ghost debug menu (src/ghost/debug-menu.ts). */
+#debug-menu {
+  position: absolute;
+  inset: 46px 10px 10px auto;
+  width: 330px;
+  overflow-y: auto;
+  padding: 8px;
+  border-radius: 12px;
+  background: rgba(18, 18, 24, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #e8eaf2;
+  font: 11px/1.3 system-ui, sans-serif;
+  z-index: 50;
+}
+#debug-menu .dbg-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; font-weight: 600; }
+#debug-menu .dbg-title { opacity: 0.55; margin: 6px 0 3px; text-transform: uppercase; letter-spacing: 0.06em; font-size: 9px; }
+#debug-menu .dbg-row { display: flex; flex-wrap: wrap; gap: 4px; }
+#debug-menu .dbg-btn {
+  padding: 3px 7px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.07);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+#debug-menu .dbg-btn:hover { background: rgba(255, 255, 255, 0.16); }

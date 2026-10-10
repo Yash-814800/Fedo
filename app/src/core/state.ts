@@ -172,6 +172,8 @@ class AppState {
   focusId: string | null = null;
 
   stateOverride: BotStateName | null = null;
+  /** The hidden ghost debug menu is open (holds the island open). */
+  debugOpen = false;
 
   /** Cursor in logical screen pixels, origin top-left (like AppState.mousePosition). */
   mouse = { x: 0, y: 0 };

@@ -35,7 +35,8 @@ export type BotStateName =
   | "finished"
   | "ratelimit"
   | "sleeping"
-  | "dizzy";
+  | "dizzy"
+  | "listening";
 
 export type BotEmoteName = "love" | "surprised" | "proud" | "wink" | "yawn" | "happy" | "annoyed";
 
@@ -181,6 +182,8 @@ export function botGlowColor(s: BotStateName): string {
       return "#34D399";
     case "ratelimit":
       return "#F59E0B";
+    case "listening":
+      return "#4DE0CC";
     default:
       return "#FFFFFF";
   }
