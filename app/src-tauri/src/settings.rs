@@ -77,6 +77,14 @@ pub struct Settings {
     /// The ghost on the desktop: whether it lives there, and its spot. Owned
     /// by the Rust side (desktop.rs) — what a webview sends back is ignored.
     pub desktop_ghost: DesktopGhostPref,
+    /// Whisper model for dictation: "base" (default) or "small".
+    pub voice_model: String,
+    /// Language hint for whisper: "auto" (default, Hinglish-friendly) or a code.
+    pub voice_language: String,
+    /// Say replies aloud (Piper) when the question was spoken.
+    pub voice_speak: bool,
+    /// Listen for "Hey Fedo" (opt-in; a process runs only while it is on).
+    pub wake_word: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -129,6 +137,10 @@ impl Default for Settings {
             pill_colors: BTreeMap::new(),
             language: String::new(),
             desktop_ghost: DesktopGhostPref::default(),
+            voice_model: "base".into(),
+            voice_language: "auto".into(),
+            voice_speak: true,
+            wake_word: false,
         }
     }
 }
@@ -410,7 +422,11 @@ mod tests {
   "shortcuts": { "openChat": { "keys": "Ctrl+Shift+K", "enabled": false } },
   "pillColors": { "integration_claude": "#2DD4BF" },
   "language": "pt-BR",
-  "desktopGhost": { "onDesktop": true, "spot": { "x": 1500.5, "y": -300.0, "space": "screen" } }
+  "desktopGhost": { "onDesktop": true, "spot": { "x": 1500.5, "y": -300.0, "space": "screen" } },
+  "voiceModel": "small",
+  "voiceLanguage": "hi",
+  "voiceSpeak": false,
+  "wakeWord": true
 }"##;
 
     fn custom() -> Value {
@@ -798,6 +814,10 @@ mod tests {
                 "pillColors",
                 "language",
                 "desktopGhost",
+                "voiceModel",
+                "voiceLanguage",
+                "voiceSpeak",
+                "wakeWord",
             ]
         );
         let _ = std::fs::remove_dir_all(&dir);

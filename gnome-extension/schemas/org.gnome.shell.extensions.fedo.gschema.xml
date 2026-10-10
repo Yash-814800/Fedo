@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.fedo" path="/org/gnome/shell/extensions/fedo/">
+    <key name="push-to-talk" type="as">
+      <default><![CDATA[['<Control><Alt>space']]]></default>
+      <summary>Push-to-talk</summary>
+      <description>Press to start listening for a spoken command, press again to finish. Works over fullscreen apps. Change it with: gsettings --schemadir ~/.local/share/gnome-shell/extensions/fedo@yash/schemas set org.gnome.shell.extensions.fedo push-to-talk "['&lt;Super&gt;F12']"</description>
+    </key>
+  </schema>
+</schemalist>

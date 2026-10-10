@@ -2480,3 +2480,29 @@ html[data-dir="rtl"] #views :is(.bubble, .reply .md-p, .reply .md-h, .reply .md-
 .view:not(.on) {
   animation: none !important;
 }
+
+/* ── Microphone ─────────────────────────────────────────────────────────── */
+
+.mic-btn {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+  cursor: default;
+  --level: 0;
+  transition: background 0.15s ease-out;
+}
+
+.mic-btn.rec {
+  background: rgba(244, 63, 94, 0.85);
+  box-shadow: 0 0 0 calc(2px + var(--level) * 7px) rgba(244, 63, 94, 0.28);
+}
+
+.mic-btn.busy {
+  opacity: 0.55;
+}

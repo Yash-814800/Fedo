@@ -32,6 +32,7 @@ mod phone;
 mod phoneplan;
 mod scheduler;
 mod spotify;
+mod voice;
 mod timeplan;
 mod unlock;
 #[cfg(target_os = "linux")]
@@ -117,6 +118,7 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
         island::apply_geometry(&app, &settings.screen, collapsed);
     }
     spotify::sync(&app, &settings.active_integrations);
+    voice::sync_wake(&app, settings.wake_word);
     if shortcuts_changed {
         shortcuts::apply(&app, &settings.shortcuts);
     }
@@ -727,6 +729,13 @@ pub fn run() {
             spotify::spotify_control,
             spotify::spotify_open,
             spotify::spotify_installed,
+            voice::voice_status,
+            voice::voice_toggle,
+            voice::voice_cancel,
+            voice::voice_prepare,
+            voice::voice_speak,
+            voice::voice_stop_speaking,
+            voice::voice_confirmation,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -746,6 +755,7 @@ pub fn run() {
             scheduler::start(handle.clone());
             phone::start_listener(handle.clone());
             spotify::sync(&handle, &loaded.active_integrations);
+            voice::sync_wake(&handle, loaded.wake_word);
             shortcuts::apply(&handle, &loaded.shortcuts);
             // Startup is a burst of one-off work (GTK, the tray, the portal);
             // let it finish, then drop what it left resident.

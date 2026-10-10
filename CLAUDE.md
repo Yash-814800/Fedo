@@ -54,6 +54,12 @@ limitations recorded as each phase lands.
   `play_uri`/`confirm_title` for "play X"; `assist.rs::play_song` does the
   `claude -p` WebSearch lookup. Only ids matching a 22-char track id are ever
   turned into a URI, and the playing title is checked before Fedo says so.
+- `app/src-tauri/src/voice.rs` + `app/voice/` — voice: `pw-record` + VAD,
+  `fedo-stt` (whisper.cpp, one process per utterance), Piper/Vosk in a venv
+  under `~/.local/share/fedo`, the headless path (island hidden → route, speak,
+  notify), `PushToTalk` on the bus (the extension binds the key). Models
+  download on first use. `wake.py` is embedded and written out when "Hey Fedo"
+  is on; the daemon re-checks every wake hit with whisper.
 - `app/src-tauri/src/chat.rs` — the chat: one `claude -p` run per turn
   (stream-json, `--resume` for follow-ups, read-only tools). `notify.rs` is
   the desktop notification; `unlock.rs` the Monday-unlock recap trigger.

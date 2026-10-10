@@ -627,6 +627,52 @@ function generalSection(): HTMLElement {
     void save();
   });
 
+  // Voice: local whisper / Piper / "Hey Fedo". Models arrive on first use.
+  const voiceModel = h("select", {}) as HTMLSelectElement;
+  voiceModel.append(
+    h("option", { value: "base", text: "base (fast, ~140 MB)" }),
+    h("option", { value: "small", text: "small (more accurate, ~470 MB)" }),
+  );
+  voiceModel.value = settings.voiceModel;
+  voiceModel.addEventListener("change", () => {
+    settings.voiceModel = voiceModel.value === "small" ? "small" : "base";
+    void save();
+  });
+  const voiceLang = h("input", {
+    type: "text", value: settings.voiceLanguage, placeholder: "auto", style: "width:56px",
+  }) as HTMLInputElement;
+  voiceLang.addEventListener("change", () => {
+    settings.voiceLanguage = voiceLang.value.trim().toLowerCase().slice(0, 5) || "auto";
+    voiceLang.value = settings.voiceLanguage;
+    void save();
+  });
+  const voiceNote = h("span", { class: "hint", text: "" });
+  const prepare = async (what: "stt" | "tts" | "wake") => {
+    voiceNote.textContent = "Downloading…";
+    try {
+      await Bridge.voicePrepare(what);
+      voiceNote.textContent = "Ready.";
+      return true;
+    } catch (err) {
+      voiceNote.textContent = String(err).replace(/^Error:\s*/, "");
+      return false;
+    }
+  };
+  void onEvent<{ what: string; fraction: number; done: boolean }>("voice-download", (d) => {
+    if (!d.done) voiceNote.textContent = `${d.what}${d.fraction >= 0 ? " " + Math.round(d.fraction * 100) + "%" : "…"}`;
+  });
+  const setupVoice = h("button", { class: "secondary", text: "Set up voice" });
+  setupVoice.addEventListener("click", async () => {
+    (await prepare("stt")) && (await prepare("tts"));
+  });
+  const wakeToggle = toggle(settings.wakeWord, (v) => {
+    settings.wakeWord = v;
+    void (async () => {
+      if (v && !(await Bridge.voiceStatus())?.wake) await prepare("wake");
+      void save();
+    })();
+  });
+
   const screen = h("select", {}) as HTMLSelectElement;
   screen.append(
     h("option", { value: "primary", text: t("Main display") }),
@@ -685,6 +731,24 @@ function generalSection(): HTMLElement {
       h("label", { text: "Country code" }),
       countryCode,
       h("span", { class: "hint", text: "for local numbers in WhatsApp (blank = from your time zone)" }),
+    ),
+    h("div", { class: "row" },
+      h("label", { text: "Voice" }),
+      voiceModel,
+      voiceLang,
+      h("span", { class: "hint", text: "model, language (auto hears Hinglish)" }),
+    ),
+    h("div", { class: "row" },
+      h("label", { text: "Speak replies" }),
+      toggle(settings.voiceSpeak, (v) => { settings.voiceSpeak = v; void save(); }),
+      h("span", { class: "hint", text: "aloud, when you asked by voice (Piper)" }),
+      setupVoice,
+      voiceNote,
+    ),
+    h("div", { class: "row" },
+      h("label", { text: "Hey Fedo" }),
+      wakeToggle,
+      h("span", { class: "hint", text: "always-on wake word (off: no process runs). Push-to-talk: Ctrl+Alt+Space." }),
     ),
     h("div", { class: "row" },
       h("label", { text: "Event reminder" }),

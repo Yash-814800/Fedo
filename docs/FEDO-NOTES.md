@@ -70,6 +70,101 @@ args.
   --json-schema` guarantee is replaced by Ollama's schema-constrained output
   plus Fedo's own re-validation.
 
+## Phase 8 — voice
+
+### What was built
+
+- **Recording + VAD** (`voice.rs`): `pw-record` (16 kHz mono s16 on stdout; no
+  cpal/ALSA headers needed) → an energy VAD with a noise floor calibrated from
+  the first 200 ms (a laptop mic's room tone sits near 0.015 RMS, above any
+  fixed minimum). Speech starts after 100 ms, ends after 1.1 s of quiet; 8 s
+  without speech or 30 s total gives up. Event-driven: the recorder thread
+  blocks on the pipe and exists only while listening.
+- **STT** (`app/voice/`, binary `fedo-stt`): whisper.cpp via `whisper-rs`
+  (built from its vendored source — no RPM needed, only libclang for bindgen),
+  one process per utterance so the model's memory goes back on exit. Model
+  `ggml-base.bin` (configurable to `small`) downloads on first use into
+  `~/.local/share/fedo/models/` with progress events; language `auto`
+  (Hinglish-friendly; settable). Silence/`[BLANK_AUDIO]` → empty.
+- **Dictation**: mic button in the chat bar → text in the box.
+- **Voice commands**: spoken text goes through the same router as typing.
+  With the island on screen the page runs it (cards, chat, `yes / do it / run
+  it / go ahead` and `no / cancel / never mind` press the card's Enter/Esc;
+  only short unambiguous phrases count). With the island hidden the whole turn
+  runs in Rust (`voice::headless`): route → chat → speak + notification; a
+  reply that needs a card opens the island on it instead.
+- **TTS**: Piper (`en_US-lessac-medium`) in a venv at `~/.local/share/fedo/venv`
+  (pip: `piper-tts`, `vosk`; nothing system-wide). Synthesises to a wav in
+  `$XDG_RUNTIME_DIR`, plays with `pw-play`; ≤280 chars spoken whole, longer cut
+  at a sentence with "the rest is in the notification". Spoken only when the
+  question was spoken (Settings → Voice → Speak replies). A new utterance
+  stops it (barge-in).
+- **Push-to-talk**: D-Bus `org.fedo.Fedo.PushToTalk()`, bound by the GNOME
+  extension through a GSettings schema (`push-to-talk`, default
+  `<Control><Alt>space`, `Shell.ActionMode.ALL`). Press again to finish early.
+  `install.sh` compiles the schema.
+- **Wake word "Hey Fedo"** (off by default, `wakeWord`): `app/voice/wake.py`
+  under the venv. Vosk small-en in grammar mode (`hey fido`, `[unk]`: "fedo"
+  isn't in its vocabulary); silence is never decoded. On a hit it writes the
+  utterance to a file; the daemon re-checks it with whisper
+  (`after_wake_word`: must *start* with hey + fedo/fido/…) so a false trigger
+  costs one short transcription and is dropped. The rest of the utterance is
+  the command; "hey fedo" alone starts a command recording.
+- Children die with the daemon (`PR_SET_PDEATHSIG`) — a Quit leaves no open
+  microphone behind (this bit me: orphaned `wake.py` + `pw-record` before it).
+
+### Verified on this machine (real mic, real models)
+
+- Dictation path: Piper speech → `fedo-stt`: "Open Spotify and Play Earrings by
+  Malcolm Todd." 2.5 s, 332 MB peak while it runs.
+- **Minecraft case, island hidden**: PushToTalk → laptop speaker → mic →
+  "What wide level are diamonds most commented in Minecraft?" (whisper `base`
+  mangled "Y" and "commonly") → `claude -p` answered correctly (Y −59) → spoken
+  by Piper + desktop notification. ~2 s transcribe, ~11 s answer.
+- **Wake, spec example**: "Hey Fedo, open Spotify and play Earrings by Malcolm
+  Todd." → Vosk → whisper recheck "Hey Fido, open Spotify and play Earrings by
+  Malcolm Todd." → router → Earrings playing (Spotify title checked). Fed from a
+  wav (`FEDO_WAKE_WAV=… fedo`, a test hook) because the room has constant
+  ambient speech.
+- False triggers: a sentence containing "video"/"fido" and ambient speech both
+  woke Vosk and were dropped by the whisper recheck (logged).
+- Orphans: 0 `wake.py`/`pw-record` after Quit.
+
+### Measured
+
+| State | RSS | CPU |
+|---|---|---|
+| Idle, voice unused, wake off (daemon) | 56 MB (PSS 30 MB) | 0.0 % |
+| Listening / transcribing | + `pw-record` ~10 MB; `fedo-stt` 332 MB peak, ~2 s | returns to 0 |
+| Wake word on | + `wake.py` **~170 MB** + `pw-record` 10 MB | **~1.3 %** of one core (0.9 + 0.4) in a noisy room |
+
+- **The wake word misses the +80 MB budget.** Vosk's model alone is ~124 MB
+  resident (python 10 MB, `import vosk` +27 MB, model +124 MB); `Gr.fst` can't
+  be dropped in grammar mode (tried). openWakeWord would be lighter but has no
+  "hey fedo" model — training one is out of scope for this phase. It stays
+  opt-in.
+
+### Not verified / limits
+
+- **Push-to-talk from the keyboard, and over a fullscreen game, is not
+  tested.** The extension code and schema are in; the running shell has the old
+  extension and GNOME needs a log out/in on Wayland to load it. The D-Bus
+  method it calls is what I exercised. `node --check` passes.
+- The mic button / listening state / download progress in the island and the
+  Settings rows were not looked at on screen (tsc clean).
+- "yes / do it" by voice → card is unit-tested for phrasing and the page
+  dispatches the card's own Enter/Esc handler; not run live end to end.
+- **Hinglish / Hindi not tested.** `base` is weak on it; set model `small`
+  (downloads ~470 MB) and language `auto` or `hi`.
+- Whisper `base` over a laptop mic mishears short words ("Y" → "wide"); the
+  routed model usually recovers. `small` is better.
+- Recording while music plays: the VAD calibrates to the music, so you must be
+  louder than it. Fedo doesn't pause Spotify while listening (an easy follow-up).
+- Piper cold-starts ~2 s per reply (a python process each time, to keep idle
+  memory at zero).
+- Wake word re-checks use whisper `en`; "Hey Fedo" in another language isn't
+  supported.
+
 ## Phase 7 — Spotify pill + "play X"
 
 ### What was built

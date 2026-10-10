@@ -73,7 +73,34 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     input.placeholder = State.promptMode ? "Paste your rough reaction…" : t(STRINGS.placeholderFirst);
     input.focus();
   });
-  const bar = h("div", { class: "chat-bar" }, input, promptToggle, send);
+  // The microphone: dictate into the box; the daemon records, whisper writes.
+  const mic = h("button", { class: "mic-btn", title: "Speak (local speech-to-text)" }, svg(ICONS.mic, 13));
+  mic.addEventListener("click", async () => {
+    const v = State.voice;
+    if (v.state === "listening") {
+      void Bridge.voiceToggle("dictate"); // finish now
+      return;
+    }
+    const status = await Bridge.voiceStatus();
+    if (status && !status.mic) {
+      State.noteMessage = "No microphone tool (pw-record) was found.";
+      State.view = "note";
+      State.notify();
+      return;
+    }
+    if (status && !status.stt) {
+      try {
+        await Bridge.voicePrepare("stt"); // first use: fetches the whisper model, with progress
+      } catch (err) {
+        State.noteMessage = String(err).replace(/^Error:\s*/, "");
+        State.view = "note";
+        State.notify();
+        return;
+      }
+    }
+    void Bridge.voiceToggle("dictate");
+  });
+  const bar = h("div", { class: "chat-bar" }, input, mic, promptToggle, send);
 
   const body = h("div", { class: "chat-body" });
   body.append(chipRow, log, bar);
@@ -100,6 +127,10 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
   async function submit() {
     const query = input.value.trim();
     if (!query || sending) return;
+    // A spoken question is answered aloud as well (Settings → Voice).
+    const spoken = State.speakNext;
+    State.speakNext = false;
+    void Bridge.voiceStopSpeaking();
     input.value = "";
     sending = true;
     Sound.play("send");
@@ -131,6 +162,7 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
           onHeightChange();
           return;
         }
+        if (spoken && (routed.kind === "done" || routed.kind === "note")) void Bridge.voiceSpeak(routed.text);
         State.assist = routed;
         State.view = "command";
         Sound.play(["card", "choices", "event", "action", "actionChoices"].includes(routed.kind) ? "question" : "approve");
@@ -153,6 +185,7 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
       State.chatHistory.push({ id: nextId++, role: "assistant", content: reply.text });
       State.stateOverride = null;
       Sound.play("finish");
+      if (spoken) void Bridge.voiceSpeak(reply.text);
     } catch (err) {
       State.stateOverride = null;
       State.noteMessage = String(err).replace(/^Error:\s*/, "");
@@ -208,7 +241,28 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
           input.setSelectionRange?.(input.value.length, input.value.length);
         });
       }
-      input.placeholder = t(State.chatHistory.length === 0 ? STRINGS.placeholderFirst : STRINGS.placeholderNext);
+      // Words from the microphone: into the box, and sent when it was a command.
+      if (State.pendingVoice && !sending) {
+        const said = State.pendingVoice;
+        State.pendingVoice = null;
+        input.value = said.text;
+        if (said.mode === "command") queueMicrotask(() => void submit());
+        else queueMicrotask(() => input.focus());
+      }
+      const v = State.voice;
+      mic.classList.toggle("rec", v.state === "listening");
+      mic.classList.toggle("busy", v.state === "transcribing" || !!v.download);
+      mic.style.setProperty("--level", String(v.level));
+      mic.title = v.download
+        ? `${v.download.what}…${v.download.fraction >= 0 ? " " + Math.round(v.download.fraction * 100) + "%" : ""}`
+        : v.state === "listening" ? "Listening… click to finish"
+        : v.state === "transcribing" ? "Transcribing…"
+        : v.message || "Speak (local speech-to-text)";
+      if (v.state === "listening") input.placeholder = "Listening…";
+      else if (v.state === "transcribing") input.placeholder = "Transcribing…";
+      else if (v.download) input.placeholder = `Getting ${v.download.what}…${v.download.fraction >= 0 ? " " + Math.round(v.download.fraction * 100) + "%" : ""}`;
+      else if (v.state === "error" && v.message) input.placeholder = v.message;
+      else input.placeholder = t(State.chatHistory.length === 0 ? STRINGS.placeholderFirst : STRINGS.placeholderNext);
       input.disabled = sending;
     },
     focus() {

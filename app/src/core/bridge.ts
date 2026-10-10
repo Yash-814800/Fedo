@@ -164,6 +164,14 @@ export const Bridge = {
   /** Runs a confirmed command: a new terminal window, or hidden when `inline` and Fedo calls it safe. */
   assistRun: (command: string, inline: boolean) => call<AssistRun>("assist_run", { command, inline }),
   assistCopy: (text: string) => call<boolean>("assist_copy", { text }),
+  /** Voice (Rust voice.rs): everything runs locally, only after the first use. */
+  voiceStatus: () => call<{ stt: boolean; tts: boolean; wake: boolean; recording: boolean; mic: boolean }>("voice_status"),
+  voiceToggle: (mode: "dictate" | "command") => call<void>("voice_toggle", { mode }),
+  voiceCancel: () => call<void>("voice_cancel"),
+  voicePrepare: (what: "stt" | "tts" | "wake") => callOrThrow<void>("voice_prepare", { what }),
+  voiceSpeak: (text: string) => call<void>("voice_speak", { text }),
+  voiceStopSpeaking: () => call<void>("voice_stop_speaking"),
+  voiceConfirmation: (text: string) => call<"yes" | "no" | null>("voice_confirmation", { text }),
   /** Is Ollama answering at `url`, and which models does it hold? */
   localAiStatus: (url: string) => call<LocalAiStatus>("local_ai_status", { url }),
   /** Writes a confirmed event or deadline to GNOME Calendar and schedules its reminders. */

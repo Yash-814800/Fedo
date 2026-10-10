@@ -2,7 +2,7 @@
 // `busctl`, and later the systemd user service) talks to.
 //
 //   object    /org/fedo/Fedo
-//   methods   Toggle()  Show(s view)  Hide()  FocusSession(s id)  Quit()
+//   methods   Toggle()  Show(s view)  Hide()  FocusSession(s id)  PushToTalk()  Quit()
 //   props     State       s   "idle" | "working" | "needs-you"  (the icon's dot)
 //             Visibility  s   "hidden" | "peek" | "open"        (the island)
 //             Muted       b   sounds off; read/write, saved in settings.json
@@ -89,6 +89,12 @@ pub fn start(app: &AppHandle) {
                 crate::island::request(&a, "show", Some(view));
                 Ok(())
             });
+            // Push-to-talk (the extension's keybinding): listen, or end now.
+            let a = app.clone();
+            b.method("PushToTalk", (), (), move |_, _, _: ()| {
+                crate::voice::toggle(&a, crate::voice::Mode::Command);
+                Ok(())
+            });
             let a = app.clone();
             b.method("Hide", (), (), move |_, _, _: ()| {
                 crate::island::request(&a, "hide", None);
@@ -152,6 +158,14 @@ pub fn start(app: &AppHandle) {
             }
         })
         .ok();
+}
+
+/// "hidden" | "peek" | "open", as the island last reported it.
+pub fn visibility(app: &AppHandle) -> String {
+    use tauri::Manager;
+    app.try_state::<Service>()
+        .map(|s| s.current.lock().unwrap().visibility.clone())
+        .unwrap_or_else(|| "hidden".into())
 }
 
 /// The island page's view of itself, pushed whenever it changes. Emits

@@ -98,6 +98,15 @@ export interface IntegrationInfo {
   configured: boolean;
 }
 
+export interface VoiceInfo {
+  state: "idle" | "listening" | "transcribing" | "error";
+  mode: "dictate" | "command";
+  level: number;
+  message: string;
+  /** A model or engine being fetched on first use. */
+  download: { what: string; fraction: number } | null;
+}
+
 export interface Settings {
   soundEnabled: boolean;
   soundVolume: number;
@@ -109,6 +118,11 @@ export interface Settings {
   aiBackend: "claude" | "local";
   localModel: string;
   ollamaUrl: string;
+  /** Voice: whisper model ("base" | "small"), language hint, spoken replies, "Hey Fedo". */
+  voiceModel: "base" | "small";
+  voiceLanguage: string;
+  voiceSpeak: boolean;
+  wakeWord: boolean;
   phoneNotify: boolean;
   phoneNotifyApps: string[];
   phoneCountryCode: string;
@@ -161,6 +175,10 @@ export const DEFAULT_SETTINGS: Settings = {
   aiBackend: "claude",
   localModel: "qwen3:4b-instruct-2507-q4_K_M",
   ollamaUrl: "http://127.0.0.1:11434",
+  voiceModel: "base",
+  voiceLanguage: "auto",
+  voiceSpeak: true,
+  wakeWord: false,
   phoneNotify: true,
   phoneNotifyApps: ["Phone", "Dialer", "Messages", "WhatsApp"],
   phoneCountryCode: "",
@@ -226,6 +244,12 @@ class AppState {
   promptMode = false;
   /** Text the chat input should start with (a card asked "to whom?"). */
   chatPrefill: string | null = null;
+  /** The microphone: what the daemon last said it was doing (core/voice.ts). */
+  voice: VoiceInfo = { state: "idle", mode: "dictate", level: 0, message: "", download: null };
+  /** Words just heard, waiting for the chat view to take them. */
+  pendingVoice: { text: string; mode: "dictate" | "command" } | null = null;
+  /** The question came by voice: its answer is said aloud too. */
+  speakNext = false;
   /** The pill that was in front when the card came up; it comes back after. */
   focusBeforeApproval: string | null = null;
 

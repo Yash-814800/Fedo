@@ -1,0 +1,13 @@
+[package]
+name = "fedo-stt"
+description = "Fedo's speech-to-text helper: raw 16 kHz mono PCM on stdin, text on stdout (whisper.cpp)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "fedo-stt"
+path = "src/main.rs"
+
+[dependencies]
+whisper-rs = "0.16"

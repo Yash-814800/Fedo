@@ -11,6 +11,7 @@ import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Gio from 'gi://Gio';
 import Meta from 'gi://Meta';
+import Shell from 'gi://Shell';
 import St from 'gi://St';
 
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
@@ -94,9 +95,25 @@ export default class FedoExtension extends Extension {
             this._maybeAdopt(actor.meta_window);
         this._monitorsId = Main.layoutManager.connect('monitors-changed', () => this._placeAll());
         this._panelSizeId = Main.panel.connect('notify::height', () => this._placeAll());
+
+        // Push-to-talk. Registered with the window manager, so it fires over a
+        // fullscreen game too (the island cannot draw there: the answer is
+        // spoken and sent as a notification).
+        try {
+            this._settings = this.getSettings();
+            Main.wm.addKeybinding('push-to-talk', this._settings,
+                Meta.KeyBindingFlags.IGNORE_AUTOREPEAT, Shell.ActionMode.ALL,
+                () => this._call('PushToTalk'));
+            this._keybinding = true;
+        } catch (e) {
+            console.error(`fedo: push-to-talk keybinding unavailable: ${e.message}`);
+        }
     }
 
     disable() {
+        if (this._keybinding) Main.wm.removeKeybinding('push-to-talk');
+        this._keybinding = false;
+        this._settings = null;
         if (this._watchId) Gio.bus_unwatch_name(this._watchId);
         this._watchId = 0;
         this._cancellable.cancel();

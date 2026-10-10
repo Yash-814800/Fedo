@@ -39,6 +39,12 @@ if [ -e "$target" ] && [ ! -L "$target" ]; then
   echo "$target exists and is not a symlink; refusing to touch it" >&2
   exit 1
 fi
+# The push-to-talk key lives in a GSettings schema, which must be compiled.
+if command -v glib-compile-schemas >/dev/null; then
+  glib-compile-schemas "$here/schemas"
+else
+  echo "glib-compile-schemas not found: push-to-talk needs it (sudo dnf install glib2-devel)" >&2
+fi
 ln -sfn "$here" "$target"
 echo "linked $target -> $here"
 

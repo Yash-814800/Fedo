@@ -24,3 +24,11 @@ Check it against the daemon without the shell:
 busctl --user introspect org.fedo.Fedo /org/fedo/Fedo
 busctl --user call org.fedo.Fedo /org/fedo/Fedo org.fedo.Fedo Toggle
 ```
+
+## Push-to-talk
+
+`schemas/org.gnome.shell.extensions.fedo.gschema.xml` defines the
+`push-to-talk` key (default `Ctrl+Alt+Space`). It calls `PushToTalk()` on the
+daemon: press to start listening, press again to finish. It is a window-manager
+keybinding, so it works over a fullscreen app. `install.sh` compiles the schema
+(`glib-compile-schemas`); log out and in once for the shell to load the change.
